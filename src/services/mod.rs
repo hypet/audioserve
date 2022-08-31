@@ -67,7 +67,6 @@ mod subs;
 pub mod transcode;
 mod types;
 
-// type Counter = Arc<AtomicUsize>;
 type Tx = UnboundedSender<Message>;
 
 #[derive(Debug)]
@@ -76,11 +75,6 @@ pub enum RemoteIpAddr {
     #[allow(dead_code)]
     Proxied(IpAddr),
 }
-
-// struct Ctx {
-//     col: Arc<Collections>,
-//     devices: Arc<Devices>
-// }
 
 #[derive(Clone, Debug)]
 struct Device {
@@ -114,8 +108,9 @@ impl Devices {
 #[derive(Debug, Serialize, Deserialize)]
 enum ShuffleMode {
     Off,
-    Global,
     CurrentDir,
+    CollectionWide,
+    Global,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -129,6 +124,7 @@ enum MsgIn {
     SwitchShuffle { mode: ShuffleMode },
     CurrentPos { collection: u32, path: String, track_position: u32, time: f32 },
     RewindTo { time: f32 },
+    VolumeChange { value: u8 },
 }
 
 impl FromStr for MsgIn {
@@ -153,6 +149,7 @@ enum MsgOut {
     SwitchShuffleEvent { mode: ShuffleMode },
     CurrentPosEvent { collection: u32, path: String, track_position: u32, time: f32 },
     RewindToEvent { time: f32 },
+    VolumeChangeEvent { value: u8 },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -973,6 +970,10 @@ fn process_message(msg: String, devices: Arc<Devices>, addr: SocketAddr) {
             MsgIn::RewindTo { time } => {
                 let rewind_to = MsgOut::RewindToEvent { time: time };
                 send_to_all_devices_excluding(rewind_to, devices.clone(), Some(addr))
+            },
+            MsgIn::VolumeChange { value } => {
+                let volume_change = MsgOut::VolumeChangeEvent { value: value };
+                send_to_all_devices_excluding(volume_change, devices.clone(), Some(addr))
             },
         },
         Err(e) => {
