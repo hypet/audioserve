@@ -1,0 +1,135 @@
+html,
+body {
+  padding: 0;
+  margin: 0;
+  height: 100%;
+}
+/* TODO use variables to match themes */
+.warning {
+  color: red;
+  font-weight: bold;
+  background-color: #ff000030;
+  padding: 0.3em;
+}
+
+/* Bit of tweaking sizes for header and menu*/
+
+.search-bar input,
+.search-bar select {
+  height: 1.7rem !important;
+  padding-top: 0.2rem;
+  padding-bottom: 0;
+  margin-bottom: 0.2rem !important;
+  line-height: 0.7rem;
+  width: auto;
+}
+
+.nav-bar {
+  height: 2.3rem;
+}
+
+.nav-bar svg {
+  color: var(--primary);
+  cursor: pointer;
+  margin-left: 0.75rem;
+}
+
+.nav-bar .icons svg:hover {
+  color: var(--primary-hover);
+}
+
+a#main-menu-button {
+  padding-left: 0;
+}
+
+a#main-menu-button svg {
+  margin-left: 0;
+}
+
+nav .icons .dropdown {
+  margin-left: 1rem;
+}
+
+/* Fix range thumb color */
+
+input[type="range"]::-webkit-slider-thumb {
+  background: var(--primary);
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  background: var(--primary-hover);
+}
+
+input[type="range"]::-moz-range-thumb {
+  background: var(--primary);
+}
+
+input[type="range"]::-moz-range-thumb:hover {
+  background: var(--primary-hover);
+}
+
+/* and additional colors for menu */
+
+:root[data-theme="light"],
+:root:not([data-theme="dark"]) {
+  --menu-background: #f9f9f9;
+  --menu-shadow: rgba(0, 0, 0, 0.2);
+
+  --background-rgb: 255, 255, 255;
+}
+
+@media only screen and (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --menu-background: #11191f;
+    --menu-shadow: rgba(255, 255, 255, 0.2);
+
+    /* Override some colors for dark theme */
+    --background-color: #000 !important;
+    --background-rgb: 0, 0, 0;
+  }
+}
+
+:root[data-theme="dark"] {
+  --menu-background: #11191f;
+  --menu-shadow: rgba(255, 255, 255, 0.2);
+
+  /* Override some colors for dark theme */
+  --background-color: #000 !important;
+  --background-rgb: 0, 0, 0;
+}
+
+ul.items-list li {
+  padding-left: 0;
+}
+
+ul.items-list li {
+  list-style-type: none;
+  cursor: pointer;
+  border-bottom: 1px solid var(--accordion-border-color);
+}
+
+ul.items-list li:hover {
+  border-color: var(--primary-hover);
+}
+
+.item-header[role="link"] {
+  all: inherit;
+  font-size: 1.25rem;
+  font-weight: bold;
+  color: var(--h4-color);
+}
+
+.link-like[role="link"] {
+  all: unset;
+  cursor: pointer;
+}
+
+.button-like[role="button"],
+.button-like[role="button"]:focus,
+.button-like[role="button"]:hover {
+  all: unset;
+  background: none !important;
+  border: none !important;
+  color: var(--primary) !important;
+  cursor: pointer;
+}
