@@ -1,9 +1,6 @@
 # Audioserve
 
-[![Build](https://github.com/izderadicka/audioserve/actions/workflows/rust_check.yml/badge.svg)](https://github.com/izderadicka/audioserve/actions/workflows/rust_check.yml)
-[![Docker Pulls](https://img.shields.io/docker/pulls/izderadicka/audioserve)](https://hub.docker.com/repository/docker/izderadicka/audioserve)
-
-[ [**DEMO AVAILABLE** - shared secret: mypass] ](https://audioserve.zderadicka.eu)
+This fork will be a little bit different. I want to make it controllable over network. So, any connected audioserve client may act like player and others like remote controls.
 
 **[New web client](https://github.com/izderadicka/audioserve-web) is now default. If you do not like it let me know (old client is available, but you'll need to enable it yourself, [see below](#web-client))**
 
