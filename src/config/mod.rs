@@ -3,8 +3,8 @@ use hyper::{Body, Request};
 use regex::Regex;
 
 pub use self::error::{Error, Result};
-use super::services::transcode::{QualityLevel, TranscodingFormat};
-use crate::services::transcode::codecs::{Bandwidth, Opus};
+// use super::services::transcode::{QualityLevel, TranscodingFormat};
+// use crate::services::transcode::codecs::{Bandwidth, Opus};
 use crate::util;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -43,34 +43,34 @@ fn base_data_dir() -> &'static PathBuf {
     }
 }
 
-#[cfg(feature = "transcoding-cache")]
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
-pub struct TranscodingCacheConfig {
-    pub root_dir: PathBuf,
-    pub max_size: u32,
-    pub max_files: u32,
-    pub disabled: bool,
-    pub save_often: bool,
-}
+// #[cfg(feature = "transcoding-cache")]
+// #[derive(Debug, Clone, Deserialize, Serialize)]
+// #[serde(default)]
+// pub struct TranscodingCacheConfig {
+//     pub root_dir: PathBuf,
+//     pub max_size: u32,
+//     pub max_files: u32,
+//     pub disabled: bool,
+//     pub save_often: bool,
+// }
 
-#[cfg(feature = "transcoding-cache")]
-impl Default for TranscodingCacheConfig {
-    fn default() -> Self {
-        let data_base_dir = base_data_dir();
-        let root_dir = data_base_dir.join("audioserve-cache");
-        TranscodingCacheConfig {
-            root_dir,
-            max_size: 1024,
-            max_files: 1024,
-            disabled: false,
-            save_often: false,
-        }
-    }
-}
+// #[cfg(feature = "transcoding-cache")]
+// impl Default for TranscodingCacheConfig {
+//     fn default() -> Self {
+//         let data_base_dir = base_data_dir();
+//         let root_dir = data_base_dir.join("audioserve-cache");
+//         TranscodingCacheConfig {
+//             root_dir,
+//             max_size: 1024,
+//             max_files: 1024,
+//             disabled: false,
+//             save_often: false,
+//         }
+//     }
+// }
 
-#[cfg(feature = "transcoding-cache")]
-impl TranscodingCacheConfig {
+// #[cfg(feature = "transcoding-cache")]
+// impl TranscodingCacheConfig {
     //TODO delete
     // pub fn new_for_name(name: impl AsRef<str>) -> Self {
     //     let mut me = Self::default();
@@ -78,141 +78,141 @@ impl TranscodingCacheConfig {
     //     me
     // }
 
-    pub fn check(&self) -> Result<()> {
-        if !util::parent_dir_exists(&self.root_dir) {
-            return value_error!(
-                "root_dir",
-                "Parent directory does not exists for {:?}",
-                self.root_dir
-            );
-        };
+//     pub fn check(&self) -> Result<()> {
+//         if !util::parent_dir_exists(&self.root_dir) {
+//             return value_error!(
+//                 "root_dir",
+//                 "Parent directory does not exists for {:?}",
+//                 self.root_dir
+//             );
+//         };
 
-        if self.max_size < 50 {
-            return value_error!(
-                "max_size",
-                "Transcoding cache small then 50 MB does not make sense"
-            );
-        }
+//         if self.max_size < 50 {
+//             return value_error!(
+//                 "max_size",
+//                 "Transcoding cache small then 50 MB does not make sense"
+//             );
+//         }
 
-        if self.max_files < 10 {
-            return value_error!(
-                "max_size",
-                "Transcoding cache with less the 10 files does not make sense"
-            );
-        }
+//         if self.max_files < 10 {
+//             return value_error!(
+//                 "max_size",
+//                 "Transcoding cache with less the 10 files does not make sense"
+//             );
+//         }
 
-        Ok(())
-    }
-}
+//         Ok(())
+//     }
+// }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
-pub struct TranscodingConfig {
-    pub max_parallel_processes: usize,
-    pub max_runtime_hours: u32,
-    #[cfg(feature = "transcoding-cache")]
-    pub cache: TranscodingCacheConfig,
-    low: TranscodingFormat,
-    medium: TranscodingFormat,
-    high: TranscodingFormat,
-    alt_configs: Option<HashMap<String, TranscodingDetails>>,
-    #[serde(skip)]
-    alt_configs_inner: Option<Vec<(regex::Regex, TranscodingDetails)>>,
-}
+// #[derive(Debug, Clone, Deserialize, Serialize)]
+// #[serde(default)]
+// pub struct TranscodingConfig {
+//     pub max_parallel_processes: usize,
+//     pub max_runtime_hours: u32,
+//     #[cfg(feature = "transcoding-cache")]
+//     pub cache: TranscodingCacheConfig,
+//     low: TranscodingFormat,
+//     medium: TranscodingFormat,
+//     high: TranscodingFormat,
+//     alt_configs: Option<HashMap<String, TranscodingDetails>>,
+//     #[serde(skip)]
+//     alt_configs_inner: Option<Vec<(regex::Regex, TranscodingDetails)>>,
+// }
 
-impl Default for TranscodingConfig {
-    fn default() -> Self {
-        TranscodingConfig {
-            max_parallel_processes: (2 * num_cpus::get()),
-            max_runtime_hours: 24,
-            #[cfg(feature = "transcoding-cache")]
-            cache: TranscodingCacheConfig::default(),
-            low: TranscodingFormat::OpusInOgg(Opus::new(32, 5, Bandwidth::SuperWideBand, true)),
-            medium: TranscodingFormat::OpusInOgg(Opus::new(48, 8, Bandwidth::SuperWideBand, false)),
-            high: TranscodingFormat::OpusInOgg(Opus::new(64, 10, Bandwidth::FullBand, false)),
-            alt_configs: None,
-            alt_configs_inner: None,
-        }
-    }
-}
+// impl Default for TranscodingConfig {
+//     fn default() -> Self {
+//         TranscodingConfig {
+//             max_parallel_processes: (2 * num_cpus::get()),
+//             max_runtime_hours: 24,
+//             #[cfg(feature = "transcoding-cache")]
+//             cache: TranscodingCacheConfig::default(),
+//             low: TranscodingFormat::OpusInOgg(Opus::new(32, 5, Bandwidth::SuperWideBand, true)),
+//             medium: TranscodingFormat::OpusInOgg(Opus::new(48, 8, Bandwidth::SuperWideBand, false)),
+//             high: TranscodingFormat::OpusInOgg(Opus::new(64, 10, Bandwidth::FullBand, false)),
+//             alt_configs: None,
+//             alt_configs_inner: None,
+//         }
+//     }
+// }
 
-macro_rules! implement_get_transcoding {
-    ($($trans_config:ty),*) => {
-        $(
-        impl $trans_config {
-            pub fn get(&self, quality: QualityLevel) -> TranscodingFormat {
-                match quality {
-                    QualityLevel::Low => self.low.clone(),
-                    QualityLevel::Medium => self.medium.clone(),
-                    QualityLevel::High => self.high.clone(),
-                    QualityLevel::Passthrough => TranscodingFormat::Remux,
-                }
-            }
-        }
-        )*
+// macro_rules! implement_get_transcoding {
+//     ($($trans_config:ty),*) => {
+//         $(
+//         impl $trans_config {
+//             pub fn get(&self, quality: QualityLevel) -> TranscodingFormat {
+//                 match quality {
+//                     QualityLevel::Low => self.low.clone(),
+//                     QualityLevel::Medium => self.medium.clone(),
+//                     QualityLevel::High => self.high.clone(),
+//                     QualityLevel::Passthrough => TranscodingFormat::Remux,
+//                 }
+//             }
+//         }
+//         )*
 
-    };
-}
+//     };
+// }
 
-impl TranscodingConfig {
-    pub fn check(&self) -> Result<()> {
-        if self.max_parallel_processes < 2 {
-            return value_error!(
-                "max_parallel_processes",
-                "With less then 2 transcoding processes audioserve will not work properly"
-            );
-        } else if self.max_parallel_processes > 100 {
-            return value_error!(
-                "max_parallel_processes",
-                "As transcodings are resource intesive, having more then 100 is not wise"
-            );
-        }
+// impl TranscodingConfig {
+//     pub fn check(&self) -> Result<()> {
+//         if self.max_parallel_processes < 2 {
+//             return value_error!(
+//                 "max_parallel_processes",
+//                 "With less then 2 transcoding processes audioserve will not work properly"
+//             );
+//         } else if self.max_parallel_processes > 100 {
+//             return value_error!(
+//                 "max_parallel_processes",
+//                 "As transcodings are resource intesive, having more then 100 is not wise"
+//             );
+//         }
 
-        if self.max_runtime_hours < 1 {
-            return value_error!("max_runtime_hours", "Minimum time is 1 hour");
-        }
+//         if self.max_runtime_hours < 1 {
+//             return value_error!("max_runtime_hours", "Minimum time is 1 hour");
+//         }
 
-        if let Some(alt_configs) = self.alt_configs.as_ref() {
-            for (re, _alt) in alt_configs {
-                regex::Regex::new(re)
-                    .map(|_re| ())
-                    .or_else(|e| value_error!("alt_encodings", "Invalid User Agent regex {}", e))?
-            }
-        }
-        #[cfg(feature = "transcoding-cache")]
-        self.cache.check()?;
-        Ok(())
-    }
+//         if let Some(alt_configs) = self.alt_configs.as_ref() {
+//             for (re, _alt) in alt_configs {
+//                 regex::Regex::new(re)
+//                     .map(|_re| ())
+//                     .or_else(|e| value_error!("alt_encodings", "Invalid User Agent regex {}", e))?
+//             }
+//         }
+//         #[cfg(feature = "transcoding-cache")]
+//         self.cache.check()?;
+//         Ok(())
+//     }
 
-    pub fn prepare(&mut self) -> Result<()> {
-        if let Some(alt_configs) = self.alt_configs.take() {
-            if alt_configs.len() > 0 {
-                self.alt_configs_inner = Some(
-                    alt_configs
-                        .into_iter()
-                        // I can unwrap because regex we checked by check fh
-                        .map(|(re, mut cfg)| {
-                            cfg.tag = generate_tag(&re);
-                            (regex::Regex::new(&re), cfg)
-                        })
-                        .map(|(res, cfg)| match res {
-                            Ok(re) => Ok((re, cfg)),
-                            Err(e) => Err(Error::in_value(
-                                "alt_configs",
-                                format!("Invalid regex {}", e),
-                            )),
-                        })
-                        .collect::<Result<Vec<_>>>()?,
-                )
-            }
-        }
-        Ok(())
-    }
+//     pub fn prepare(&mut self) -> Result<()> {
+//         if let Some(alt_configs) = self.alt_configs.take() {
+//             if alt_configs.len() > 0 {
+//                 self.alt_configs_inner = Some(
+//                     alt_configs
+//                         .into_iter()
+//                         // I can unwrap because regex we checked by check fh
+//                         .map(|(re, mut cfg)| {
+//                             cfg.tag = generate_tag(&re);
+//                             (regex::Regex::new(&re), cfg)
+//                         })
+//                         .map(|(res, cfg)| match res {
+//                             Ok(re) => Ok((re, cfg)),
+//                             Err(e) => Err(Error::in_value(
+//                                 "alt_configs",
+//                                 format!("Invalid regex {}", e),
+//                             )),
+//                         })
+//                         .collect::<Result<Vec<_>>>()?,
+//                 )
+//             }
+//         }
+//         Ok(())
+//     }
 
-    pub fn alt_configs(&self) -> Option<&Vec<(regex::Regex, TranscodingDetails)>> {
-        self.alt_configs_inner.as_ref()
-    }
-}
+//     pub fn alt_configs(&self) -> Option<&Vec<(regex::Regex, TranscodingDetails)>> {
+//         self.alt_configs_inner.as_ref()
+//     }
+// }
 
 fn generate_tag(s: &str) -> String {
     let hash = ring::digest::digest(&ring::digest::SHA256, s.as_bytes());
@@ -222,16 +222,16 @@ fn generate_tag(s: &str) -> String {
     );
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct TranscodingDetails {
-    #[serde(skip)]
-    pub tag: String,
-    low: TranscodingFormat,
-    medium: TranscodingFormat,
-    high: TranscodingFormat,
-}
+// #[derive(Debug, Clone, Deserialize, Serialize)]
+// pub struct TranscodingDetails {
+//     #[serde(skip)]
+//     pub tag: String,
+//     low: TranscodingFormat,
+//     medium: TranscodingFormat,
+//     high: TranscodingFormat,
+// }
 
-implement_get_transcoding!(TranscodingConfig, TranscodingDetails);
+// implement_get_transcoding!(TranscodingConfig, TranscodingDetails);
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
@@ -437,7 +437,6 @@ pub struct Config {
     pub url_path_prefix: Option<String>,
     pub shared_secret: Option<String>,
     pub limit_rate: Option<f32>,
-    pub transcoding: TranscodingConfig,
     pub token_validity_hours: u32,
     pub secret_file: PathBuf,
     pub client_dir: PathBuf,
@@ -510,7 +509,7 @@ impl Config {
     }
     /// Any runtime optimalizations, compilatipons of config
     pub fn prepare(&mut self) -> Result<()> {
-        self.transcoding.prepare()?;
+        // self.transcoding.prepare()?;
 
         if let Some(ref mut cors) = self.cors {
             if let Some(ref re) = cors.regex {
@@ -564,7 +563,7 @@ impl Config {
             self.ssl.as_ref().unwrap().check()?
         }
 
-        self.transcoding.check()?;
+        // self.transcoding.check()?;
         self.thread_pool.check()?;
         self.chapters.check()?;
         #[cfg(feature = "shared-positions")]
@@ -649,9 +648,9 @@ impl Default for Config {
             thread_pool: ThreadPoolConfig::default(),
             shared_secret: None,
             limit_rate: None,
-            transcoding: TranscodingConfig::default(),
+            // transcoding: TranscodingConfig::default(),
             token_validity_hours: 365 * 24,
-            client_dir: "client/dist".into(),
+            client_dir: "client".into(),
             secret_file: data_base_dir.join("audioserve.secret"),
             cors: None,
             ssl: None,
@@ -730,25 +729,25 @@ mod tests {
         println!("{}", s);
 
         let des: Config = serde_yaml::from_str(&s).unwrap();
-        assert_eq!(config.transcoding.medium, des.transcoding.medium);
+        // assert_eq!(config.transcoding.medium, des.transcoding.medium);
     }
 
-    use crate::services::transcode::QualityLevel;
-    #[test]
-    fn test_transcoding_profile_deserialize() {
-        fn load_file(fname: &str) -> Config {
-            let f = File::open(fname).unwrap();
-            serde_yaml::from_reader(f).unwrap()
-        }
-        init_default_config();
-        let c1 = load_file("./test_data/transcodings.yaml");
-        assert_eq!(c1.transcoding.get(QualityLevel::Medium).bitrate(), 24);
-        let c2 = load_file("./test_data/transcodings.1.yaml");
-        assert_eq!(
-            c2.transcoding.get(QualityLevel::Medium).format_name(),
-            "mp3"
-        );
-        let c3 = load_file("./test_data/transcodings.2.yaml");
-        assert_eq!(c3.transcoding.get(QualityLevel::High).bitrate(), 96);
-    }
+    // use crate::services::transcode::QualityLevel;
+    // #[test]
+    // fn test_transcoding_profile_deserialize() {
+    //     fn load_file(fname: &str) -> Config {
+    //         let f = File::open(fname).unwrap();
+    //         serde_yaml::from_reader(f).unwrap()
+    //     }
+    //     init_default_config();
+    //     let c1 = load_file("./test_data/transcodings.yaml");
+    //     assert_eq!(c1.transcoding.get(QualityLevel::Medium).bitrate(), 24);
+    //     let c2 = load_file("./test_data/transcodings.1.yaml");
+    //     assert_eq!(
+    //         c2.transcoding.get(QualityLevel::Medium).format_name(),
+    //         "mp3"
+    //     );
+    //     let c3 = load_file("./test_data/transcodings.2.yaml");
+    //     assert_eq!(c3.transcoding.get(QualityLevel::High).bitrate(), 96);
+    // }
 }

@@ -3,7 +3,6 @@ use std::process::exit;
 use super::validators::*;
 use super::*;
 use clap::{crate_authors, crate_name, App, Arg};
-use collection::tags::{ALLOWED_TAGS, BASIC_TAGS};
 
 type Parser<'a> = App<'a, 'a>;
 
@@ -498,13 +497,13 @@ where
         config.limit_rate = Some(r)
     }
 
-    if let Some(n) = args.value_of("transcoding-max-parallel-processes") {
-        config.transcoding.max_parallel_processes = n.parse().unwrap()
-    }
+    // if let Some(n) = args.value_of("transcoding-max-parallel-processes") {
+    //     config.transcoding.max_parallel_processes = n.parse().unwrap()
+    // }
 
-    if let Some(n) = args.value_of("transcoding-max-runtime") {
-        config.transcoding.max_runtime_hours = n.parse().unwrap()
-    }
+    // if let Some(n) = args.value_of("transcoding-max-runtime") {
+    //     config.transcoding.max_runtime_hours = n.parse().unwrap()
+    // }
 
     if let Some(v) = args.value_of("thread-pool-keep-alive-secs") {
         config.thread_pool.keep_alive = Some(Duration::from_secs(v.parse().unwrap()))
@@ -546,13 +545,13 @@ where
 
     if let Some(tags) = args.values_of("tags-custom") {
         for t in tags {
-            if !ALLOWED_TAGS.contains(&t) {
-                arg_error!("tags-custom", "Unknown tag")?
-            }
+            // if !ALLOWED_TAGS.contains(&t) {
+            //     arg_error!("tags-custom", "Unknown tag")?
+            // }
             config.tags.insert(t.to_string());
         }
     } else if is_present_or_env("tags", "AUDIOSERVE_TAGS") {
-        config.tags.extend(BASIC_TAGS.iter().map(|i| i.to_string()));
+        // config.tags.extend(BASIC_TAGS.iter().map(|i| i.to_string()));
     }
 
     let parse_cache_age = |age: &str| {
@@ -739,11 +738,11 @@ BE AWARE: if you use or change tags arguments all collection cache has to be res
 
 Preferred tags are: 
 ");
-    print_tags(BASIC_TAGS);
+    // print_tags(BASIC_TAGS);
 
     println!("\nAvailable tags are:");
 
-    print_tags(ALLOWED_TAGS);
+    // print_tags(ALLOWED_TAGS);
 }
 
 fn print_tags(list: &[&str]) {
@@ -801,8 +800,8 @@ mod test {
         assert_eq!(1000, c.thread_pool.queue_size);
         assert_eq!(Some(Duration::from_secs(60)), c.thread_pool.keep_alive);
         assert_eq!(Some("usak".into()), c.shared_secret);
-        assert_eq!(99, c.transcoding.max_parallel_processes);
-        assert_eq!(99, c.transcoding.max_runtime_hours);
+        // assert_eq!(99, c.transcoding.max_parallel_processes);
+        // assert_eq!(99, c.transcoding.max_runtime_hours);
         assert_eq!(99 * 24, c.token_validity_hours);
         assert_eq!(PathBuf::from("test_data"), c.client_dir);
         assert_eq!(PathBuf::from("test_data/some_secret"), c.secret_file);

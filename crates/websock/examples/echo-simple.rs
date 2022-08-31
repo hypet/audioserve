@@ -113,6 +113,7 @@ pub fn upgrade_connection(
             Ok(r)
         });
 
+        
     Ok((res, upgraded))
 }
 
@@ -124,11 +125,11 @@ fn handle_ws_connection(req: Request<Body>) -> Result<Response<Body>, io::Error>
             let run_ws_task = async {
                 match ws.await {
                     Ok(ws) => {
-                        debug!("Spawning WS");
+                        info!("Spawning WS");
                         let mut counter = 0;
                         let (tx, rc) = ws.split();
                         let rc = rc.try_filter_map(|m| {
-                            debug!("Got message {:?}", m);
+                            info!("Got message {:?}", m);
                             future::ok(match m {
                                 protocol::Message::Text(text) => {
                                     counter += 1;
@@ -142,7 +143,7 @@ fn handle_ws_connection(req: Request<Body>) -> Result<Response<Body>, io::Error>
                         });
                         match rc.forward(tx).await {
                             Err(e) => error!("WS Error {}", e),
-                            Ok(_) => debug!("Websocket has ended"),
+                            Ok(_) => info!("Websocket has ended"),
                         }
                     }
                     Err(_e) => error!("WS error"),

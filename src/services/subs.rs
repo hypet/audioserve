@@ -2,9 +2,9 @@
 use super::{
     resp,
     search::{Search, SearchTrait},
-    transcode::{guess_format, AudioFilePath, ChosenTranscoding, QualityLevel, Transcoder},
+    transcode::{guess_format, AudioFilePath},
     types::*,
-    Counter,
+    // Counter,
 };
 use crate::{
     config::get_config,
@@ -23,7 +23,7 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     sync::{atomic::Ordering, Arc},
-    task::{Context, Poll},
+    task::{Context, Poll}, env,
 };
 use tokio::{
     io::{AsyncRead, AsyncSeekExt, ReadBuf},
@@ -33,179 +33,6 @@ use tokio::{
 pub type ByteRange = (Bound<u64>, Bound<u64>);
 type Response = HyperResponse<Body>;
 pub type ResponseFuture = Pin<Box<dyn Future<Output = Result<Response, Error>> + Send>>;
-
-#[cfg(not(feature = "transcoding-cache"))]
-fn serve_file_cached_or_transcoded(
-    full_path: PathBuf,
-    seek: Option<f32>,
-    span: Option<TimeSpan>,
-    _range: Option<ByteRange>,
-    transcoding: super::TranscodingDetails,
-    transcoding_quality: ChosenTranscoding,
-) -> ResponseFuture {
-    serve_file_transcoded_checked(
-        AudioFilePath::Original(full_path),
-        seek,
-        span,
-        transcoding,
-        transcoding_quality,
-    )
-}
-
-#[cfg(feature = "transcoding-cache")]
-fn serve_file_cached_or_transcoded(
-    full_path: PathBuf,
-    seek: Option<f32>,
-    span: Option<TimeSpan>,
-    range: Option<ByteRange>,
-    transcoding: super::TranscodingDetails,
-    transcoding_quality: ChosenTranscoding,
-) -> ResponseFuture {
-    if get_config().transcoding.cache.disabled {
-        return serve_file_transcoded_checked(
-            AudioFilePath::Original(full_path),
-            seek,
-            span,
-            transcoding,
-            transcoding_quality,
-        );
-    }
-
-    use super::transcode::cache::{cache_key, get_cache};
-    let cache = get_cache();
-    let cache_key = cache_key(&full_path, &transcoding_quality, span);
-    let fut = cache
-        .get2(cache_key)
-        .then(|res| match res {
-            Err(e) => {
-                error!("Cache lookup error: {}", e);
-                future::ok(None)
-            }
-            Ok(f) => future::ok(f),
-        })
-        .and_then(move |maybe_file| match maybe_file {
-            None => serve_file_transcoded_checked(
-                AudioFilePath::Original(full_path),
-                seek,
-                span,
-                transcoding,
-                transcoding_quality,
-            ),
-            Some((f, path)) => {
-                if seek.is_some() {
-                    debug!(
-                        "File is in cache and seek is needed -  will send remuxed from {:?} {:?}",
-                        path, span
-                    );
-                    serve_file_transcoded_checked(
-                        AudioFilePath::Transcoded(path),
-                        seek,
-                        None,
-                        transcoding,
-                        transcoding_quality,
-                    )
-                } else {
-                    debug!("Sending file {:?} from transcoded cache", &full_path);
-                    let mime = transcoding_quality.format.mime();
-                    Box::pin(serve_opened_file(f, range, None, mime).map_err(|e| {
-                        error!("Error sending cached file: {}", e);
-                        Error::new(e).context("sending cached file")
-                    }))
-                }
-            }
-        });
-
-    Box::pin(fut)
-}
-
-fn serve_file_transcoded_checked(
-    full_path: AudioFilePath<PathBuf>,
-    seek: Option<f32>,
-    span: Option<TimeSpan>,
-    transcoding: super::TranscodingDetails,
-    transcoding_quality: ChosenTranscoding,
-) -> ResponseFuture {
-    let counter = transcoding.transcodings;
-    let mut running_transcodings = counter.load(Ordering::SeqCst);
-    loop {
-        if running_transcodings >= transcoding.max_transcodings {
-            warn!(
-                "Max transcodings reached {}/{}",
-                running_transcodings, transcoding.max_transcodings
-            );
-            return resp::fut(resp::too_many_requests);
-        }
-
-        match counter.compare_exchange(
-            running_transcodings,
-            running_transcodings + 1,
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        ) {
-            Ok(_) => {
-                running_transcodings += 1;
-                break;
-            }
-            Err(curr) => running_transcodings = curr,
-        }
-    }
-
-    debug!(
-        "Sendig file {:?} transcoded - remaining slots {}/{}",
-        &full_path,
-        transcoding.max_transcodings - running_transcodings,
-        transcoding.max_transcodings
-    );
-    Box::pin(serve_file_transcoded(
-        full_path,
-        seek,
-        span,
-        transcoding_quality,
-        counter,
-    ))
-}
-
-async fn serve_file_transcoded(
-    full_path: AudioFilePath<PathBuf>,
-    seek: Option<f32>,
-    span: Option<TimeSpan>,
-    transcoding_quality: ChosenTranscoding,
-    counter: Counter,
-) -> Result<Response> {
-    let mime = if let QualityLevel::Passthrough = transcoding_quality.level {
-        guess_format(full_path.as_ref()).mime
-    } else {
-        transcoding_quality.format.mime()
-    };
-
-    let transcoder = Transcoder::new(transcoding_quality);
-    let params = transcoder.transcoding_params();
-
-    // check if file exists
-
-    if !tokio::fs::metadata(full_path.as_ref())
-        .await
-        .map(|m| m.is_file())
-        .unwrap_or(false)
-    {
-        error!(
-            "Requesting non existent file for transcoding {:?}",
-            full_path
-        );
-        return Ok(resp::not_found());
-    }
-
-    transcoder
-        .transcode(full_path, seek, span, counter.clone())
-        .await
-        .map(move |stream| {
-            HyperResponse::builder()
-                .typed_header(ContentType::from(mime))
-                .header("X-Transcode", params.as_bytes())
-                .body(Body::wrap_stream(stream))
-                .unwrap()
-        })
-}
 
 pub struct ChunkStream<T> {
     src: Option<T>,
@@ -326,7 +153,9 @@ fn serve_file_from_fs(
     range: Option<ByteRange>,
     caching: Option<u32>,
 ) -> ResponseFuture {
-    let filename: PathBuf = full_path.into();
+    let base_dir = env::current_dir();
+    let filename: PathBuf = base_dir.unwrap().join(full_path).into();
+    debug!("Requested static file: {:?}", filename);
     let fut = async move {
         match tokio::fs::File::open(&filename).await {
             Ok(file) => {
@@ -357,38 +186,12 @@ pub fn send_file<P: AsRef<Path>>(
     base_path: &'static Path,
     file_path: P,
     range: Option<ByteRange>,
-    seek: Option<f32>,
-    transcoding: super::TranscodingDetails,
-    transcoding_quality: Option<ChosenTranscoding>,
+    seek: Option<f32>
 ) -> ResponseFuture {
     let (real_path, span) = parse_chapter_path(file_path.as_ref());
     let full_path = base_path.join(real_path);
-    if let Some(transcoding_quality) = transcoding_quality {
-        debug!(
-            "Sending file transcoded in quality {:?}",
-            transcoding_quality.level
-        );
-        serve_file_cached_or_transcoded(
-            full_path,
-            seek,
-            span,
-            range,
-            transcoding,
-            transcoding_quality,
-        )
-    } else if span.is_some() {
-        debug!("Sending part of file remuxed");
-        serve_file_transcoded_checked(
-            AudioFilePath::Original(full_path),
-            seek,
-            span,
-            transcoding,
-            ChosenTranscoding::passthough(),
-        )
-    } else {
-        debug!("Sending file directly from fs");
-        serve_file_from_fs(&full_path, range, None)
-    }
+    debug!("Sending file directly from fs");
+    serve_file_from_fs(&full_path, range, None)
 }
 
 pub fn get_folder(
@@ -520,6 +323,7 @@ pub fn collections_list() -> ResponseFuture {
             })
             .collect(),
     };
+    debug!("Sending collections: {}", &collections.count);
     Box::pin(future::ok(json_response(&collections)))
 }
 
@@ -606,13 +410,6 @@ pub fn all_positions(
             .get_all_positions_for_group_async(group, filter)
             .map(|pos| Ok(json_response(&pos))),
     )
-}
-
-pub fn transcodings_list(user_agent: Option<&str>) -> ResponseFuture {
-    let transcodings = user_agent
-        .map(|ua| Transcodings::for_user_agent(ua))
-        .unwrap_or_default();
-    Box::pin(future::ok(json_response(&transcodings)))
 }
 
 pub fn search(

@@ -1,29 +1,47 @@
 use self::auth::{AuthResult, Authenticator};
 use self::search::Search;
 use self::subs::{
-    collections_list, get_folder, recent, search, send_file, send_file_simple, transcodings_list,
-    ResponseFuture,
+    collections_list, get_folder, recent, search, send_file, send_file_simple, ResponseFuture,
 };
-use self::transcode::QualityLevel;
 use crate::config::get_config;
-use crate::services::transcode::ChosenTranscoding;
 use crate::util::ResponseBuilderExt;
-use crate::{error, util::header2header};
+use crate::{error, util::header2header, Error};
 use bytes::{Bytes, BytesMut};
 use collection::{Collections, FoldersOrdering};
+use dashmap::DashMap;
 use futures::prelude::*;
 use futures::{future, TryFutureExt};
+use futures_channel::mpsc::{unbounded, UnboundedSender};
+use futures_util::{pin_mut, stream::TryStreamExt, StreamExt};
 use headers::{
     AccessControlAllowCredentials, AccessControlAllowHeaders, AccessControlAllowMethods,
     AccessControlAllowOrigin, AccessControlMaxAge, AccessControlRequestHeaders, HeaderMapExt,
     Origin, Range, UserAgent,
 };
-use hyper::StatusCode;
-use hyper::{body::HttpBody, service::Service, Body, Method, Request, Response};
+use hyper::body::HttpBody;
+use hyper::{
+    header::{
+        HeaderValue, CONNECTION, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_VERSION,
+        UPGRADE,
+    },
+    server::conn::AddrStream,
+    service::{make_service_fn, service_fn, Service},
+    upgrade::Upgraded,
+    Body, Method, Request, Response, Server, StatusCode, Version,
+};
 use leaky_cauldron::Leaky;
 use percent_encoding::percent_decode;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
+use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
+use tokio_tungstenite::tungstenite::protocol::Role;
+use tokio_tungstenite::tungstenite::Message;
+// use tracing_mutex::stdsync::TracingMutex;
+use uuid::Uuid;
+// use std::fmt::Result;
 use std::iter::FromIterator;
+use std::str::FromStr;
+// use std::sync::Mutex;
 use std::time::Duration;
 use std::{
     borrow::Cow,
@@ -37,6 +55,7 @@ use std::{
     sync::{atomic::AtomicUsize, Arc},
     task::Poll,
 };
+use tokio_tungstenite::WebSocketStream;
 use url::form_urlencoded;
 
 pub mod auth;
@@ -48,7 +67,8 @@ mod subs;
 pub mod transcode;
 mod types;
 
-type Counter = Arc<AtomicUsize>;
+// type Counter = Arc<AtomicUsize>;
+type Tx = UnboundedSender<Message>;
 
 #[derive(Debug)]
 pub enum RemoteIpAddr {
@@ -56,6 +76,87 @@ pub enum RemoteIpAddr {
     #[allow(dead_code)]
     Proxied(IpAddr),
 }
+
+// struct Ctx {
+//     col: Arc<Collections>,
+//     devices: Arc<Devices>
+// }
+
+#[derive(Clone, Debug)]
+struct Device {
+    name: Option<String>,
+    id: String,
+    ws: Tx,
+    active: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ClientDevice {
+    name: String,
+    id: String,
+    active: bool,
+}
+
+#[derive(Debug)]
+pub struct Devices {
+    // map: TracingMutex<HashMap<SocketAddr, Device>>,
+    map: DashMap<SocketAddr, Device>,
+}
+
+impl Devices {
+    pub fn new() -> Self {
+        Devices {
+            map: DashMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+enum ShuffleMode {
+    Off,
+    Global,
+    CurrentDir,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+enum MsgIn {
+    RegisterDevice { name: String },
+    MakeDeviceActive { device_id: String },
+    PlayTrack { collection: u32, path: String, track_position: u32 },
+    NextTrack { track: String },
+    Pause {},
+    Resume {},
+    SwitchShuffle { mode: ShuffleMode },
+    CurrentPos { collection: u32, path: String, track_position: u32, time: f32 },
+    RewindTo { time: f32 },
+}
+
+impl FromStr for MsgIn {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let v: MsgIn = serde_json::from_str(s)?;
+        Ok(v)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+enum MsgOut {
+    RegisterDeviceEvent { device_id: String },
+    DevicesOnlineEvent { devices: Vec<ClientDevice> },
+    MakeDeviceActiveEvent { device_id: String },
+    PlayTrackEvent { collection: u32, path: String, track_position: u32 },
+    NextTrackEvent { track: String },
+    RewindTrackToTime {},
+    PauseEvent {},
+    ResumeEvent {},
+    SwitchShuffleEvent { mode: ShuffleMode },
+    CurrentPosEvent { collection: u32, path: String, track_position: u32, time: f32 },
+    RewindToEvent { time: f32 },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Msg(MsgOut);
 
 impl AsRef<IpAddr> for RemoteIpAddr {
     fn as_ref(&self) -> &IpAddr {
@@ -251,26 +352,21 @@ impl RequestWrapper {
         false
     }
 }
-#[derive(Clone)]
-pub struct TranscodingDetails {
-    pub transcodings: Counter,
-    pub max_transcodings: usize,
-}
 
 pub struct ServiceFactory<T> {
     authenticator: Option<Arc<dyn Authenticator<Credentials = T>>>,
     rate_limitter: Option<Arc<Leaky>>,
     search: Search<String>,
-    transcoding: TranscodingDetails,
     collections: Arc<Collections>,
+    devices: Arc<Devices>,
 }
 
 impl<T> ServiceFactory<T> {
     pub fn new<A>(
         auth: Option<A>,
         search: Search<String>,
-        transcoding: TranscodingDetails,
         collections: Arc<Collections>,
+        devices: Arc<Devices>,
         rate_limit: Option<f32>,
     ) -> Self
     where
@@ -280,8 +376,8 @@ impl<T> ServiceFactory<T> {
             authenticator: auth.map(|a| Arc::new(a) as Arc<dyn Authenticator<Credentials = T>>),
             rate_limitter: rate_limit.map(|l| Arc::new(Leaky::new(l))),
             search,
-            transcoding,
             collections,
+            devices,
         }
     }
 
@@ -294,8 +390,8 @@ impl<T> ServiceFactory<T> {
             authenticator: self.authenticator.clone(),
             rate_limitter: self.rate_limitter.clone(),
             search: self.search.clone(),
-            transcoding: self.transcoding.clone(),
             collections: self.collections.clone(),
+            devices: self.devices.clone(),
             remote_addr,
             is_ssl,
         })
@@ -307,8 +403,8 @@ pub struct FileSendService<T> {
     pub authenticator: Option<Arc<dyn Authenticator<Credentials = T>>>,
     pub rate_limitter: Option<Arc<Leaky>>,
     pub search: Search<String>,
-    pub transcoding: TranscodingDetails,
     pub collections: Arc<Collections>,
+    pub devices: Arc<Devices>,
     pub remote_addr: SocketAddr,
     pub is_ssl: bool,
 }
@@ -445,20 +541,22 @@ impl<C: 'static> FileSendService<C> {
         }
         // from here everything must be authenticated
         let searcher = self.search.clone();
-        let transcoding = self.transcoding.clone();
         let cors = get_config().is_cors_enabled(&req.request);
         let origin = req.headers().typed_get::<Origin>();
+        let addr = self.remote_addr;
 
         let resp = match self.authenticator {
             Some(ref auth) => {
                 let collections = self.collections.clone();
+                let devices = self.devices.clone();
                 Box::pin(auth.authenticate(req).and_then(move |result| match result {
                     AuthResult::Authenticated { request, .. } => {
                         FileSendService::<C>::process_checked(
                             request,
+                            addr,
                             searcher,
-                            transcoding,
                             collections,
+                            devices,
                         )
                     }
                     AuthResult::LoggedIn(resp) | AuthResult::Rejected(resp) => {
@@ -468,9 +566,10 @@ impl<C: 'static> FileSendService<C> {
             }
             None => FileSendService::<C>::process_checked(
                 req,
+                addr,
                 searcher,
-                transcoding,
                 self.collections.clone(),
+                self.devices.clone(),
             ),
         };
         Box::pin(resp.map_ok(move |r| add_cors_headers(r, origin, cors)))
@@ -478,9 +577,10 @@ impl<C: 'static> FileSendService<C> {
 
     fn process_checked(
         #[allow(unused_mut)] mut req: RequestWrapper,
+        addr: SocketAddr,
         searcher: Search<String>,
-        transcoding: TranscodingDetails,
         collections: Arc<Collections>,
+        devices: Arc<Devices>,
     ) -> ResponseFuture {
         let params = req.params();
         let path = req.path();
@@ -488,9 +588,8 @@ impl<C: 'static> FileSendService<C> {
             Method::GET => {
                 if path.starts_with("/collections") {
                     collections_list()
-                } else if path.starts_with("/transcodings") {
-                    let user_agent = req.headers().typed_get::<UserAgent>();
-                    transcodings_list(user_agent.as_ref().map(|h| h.as_str()))
+                } else if path.starts_with("/ws") {
+                    handle_request(collections, devices, req.request, addr)
                 } else if cfg!(feature = "shared-positions") && path.starts_with("/positions") {
                     // positions API
                     #[cfg(feature = "shared-positions")]
@@ -556,7 +655,6 @@ impl<C: 'static> FileSendService<C> {
                             &req,
                             base_dir,
                             path,
-                            transcoding,
                             params,
                             user_agent.as_ref().map(|ua| ua.as_str()),
                         )
@@ -673,7 +771,6 @@ impl<C: 'static> FileSendService<C> {
         req: &RequestWrapper,
         base_dir: &'static Path,
         path: &str,
-        transcoding: TranscodingDetails,
         params: QueryParams,
         user_agent: Option<&str>,
     ) -> ResponseFuture {
@@ -700,19 +797,280 @@ impl<C: 'static> FileSendService<C> {
             None => None,
         };
         let seek: Option<f32> = params.get("seek").and_then(|s| s.parse().ok());
-        let transcoding_quality: Option<ChosenTranscoding> = params
-            .get("trans")
-            .and_then(|t| QualityLevel::from_letter(&t))
-            .map(|level| ChosenTranscoding::for_level_and_user_agent(level, user_agent));
 
-        send_file(
-            base_dir,
-            get_subpath(path, "/audio/"),
-            bytes_range,
-            seek,
-            transcoding,
-            transcoding_quality,
-        )
+        send_file(base_dir, get_subpath(path, "/audio/"), bytes_range, seek)
+    }
+}
+
+async fn handle_connection(
+    ws_stream: WebSocketStream<Upgraded>,
+    devices: Arc<Devices>,
+    addr: SocketAddr,
+) {
+    debug!("WebSocket connection established: {}", addr);
+
+    // Insert the write part of this peer to the peer map.
+    let (tx, rx) = unbounded();
+    let device_uuid = Uuid::new_v4().to_string();
+    devices.map.insert(
+        addr,
+        Device {
+            name: None,
+            id: device_uuid.clone(),
+            ws: tx,
+            active: false,
+        },
+    );
+
+    let (outgoing, incoming) = ws_stream.split();
+
+    let broadcast_incoming = incoming.try_for_each(|msg| {
+        match msg {
+            Message::Text(string) => {
+                debug!("Received a message from {}: {}", addr, string);
+                process_message(string, devices.clone(), addr);
+            }
+            Message::Binary(_) => {
+                error!("Message from {}. Binary messaging is not supported", addr)
+            }
+            Message::Ping(_) | Message::Pong(_) => debug!("Received ping/pong from {}", addr),
+            Message::Close(None) => {
+                debug!("{} closed websocket", addr);
+                devices.map.remove(&addr);
+                send_updated_device_list(devices.clone());
+            }
+            Message::Close(Some(frame)) => {
+                debug!("{} closed websocket, reason: {}", addr, frame.reason);
+                devices.map.remove(&addr);
+                send_updated_device_list(devices.clone());
+            }
+            Message::Frame(frame) => debug!("Received frame: {:?}", frame.into_data()),
+        }
+
+        future::ok(())
+    });
+
+    let receive_from_others = rx.map(Ok).forward(outgoing);
+    debug!("receive_from_others");
+
+    pin_mut!(broadcast_incoming, receive_from_others);
+    future::select(broadcast_incoming, receive_from_others).await;
+
+    debug!("{} disconnected", &addr);
+}
+
+pub fn handle_request(
+    collections: Arc<Collections>,
+    devices: Arc<Devices>,
+    mut req: Request<Body>,
+    addr: SocketAddr,
+) -> ResponseFuture {
+    debug!("Received a new, potentially ws handshake");
+    debug!("The request's path is: {}", req.uri().path());
+    debug!("The request's headers are:");
+    let upgrade = HeaderValue::from_static("Upgrade");
+    let websocket = HeaderValue::from_static("websocket");
+    let headers = req.headers();
+    let key = headers.get(SEC_WEBSOCKET_KEY);
+    let derived = key.map(|k| derive_accept_key(k.as_bytes()));
+    // if req.method() != Method::GET
+    //     || req.version() < Version::HTTP_11
+    //     || !headers
+    //         .get(CONNECTION)
+    //         .and_then(|h| h.to_str().ok())
+    //         .map(|h| {
+    //             h.split(|c| c == ' ' || c == ',')
+    //                 .any(|p| p.eq_ignore_ascii_case(upgrade.to_str().unwrap()))
+    //         })
+    //         .unwrap_or(false)
+    //     || !headers
+    //         .get(UPGRADE)
+    //         .and_then(|h| h.to_str().ok())
+    //         .map(|h| h.eq_ignore_ascii_case("websocket"))
+    //         .unwrap_or(false)
+    //     || !headers.get(SEC_WEBSOCKET_VERSION).map(|h| h == "13").unwrap_or(false)
+    //     || key.is_none()
+    //     || req.uri() != "/socket"
+    // {
+    //     Box::pin(future::ok(json_response(&collections)))
+    //     return Ok(Response::new(Body::from("Hello World!")));
+    // }
+    let ver = req.version();
+    tokio::task::spawn(async move {
+        match hyper::upgrade::on(&mut req).await {
+            Ok(upgraded) => {
+                trace!("upgraded connection");
+                handle_connection(
+                    WebSocketStream::from_raw_socket(upgraded, Role::Server, None).await,
+                    devices,
+                    addr,
+                )
+                .await;
+            }
+            Err(e) => error!("upgrade error: {}", e),
+        }
+    });
+    let mut res = Response::new(Body::empty());
+    *res.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
+    *res.version_mut() = ver;
+    res.headers_mut().append(CONNECTION, upgrade);
+    res.headers_mut().append(UPGRADE, websocket);
+    res.headers_mut()
+        .append(SEC_WEBSOCKET_ACCEPT, derived.unwrap().parse().unwrap());
+    Box::pin(future::ok(res))
+}
+
+fn process_message(msg: String, devices: Arc<Devices>, addr: SocketAddr) {
+    debug!("Got message {:?} from {}", msg, addr);
+    let message: Result<MsgIn, Error> = msg.parse();
+
+    let devices = devices.clone();
+
+    match message {
+        Ok(message) => match message {
+            MsgIn::RegisterDevice { name } => {
+                let mut device = devices.map.get_mut(&addr).unwrap();
+                device.name = Some(name);
+                debug!("RegisterDevice: {:?}", device.id);
+                let reg_device_event = MsgOut::RegisterDeviceEvent {
+                    device_id: device.id.clone()
+                };
+                send_to_device(reg_device_event, devices.clone(), addr);
+                send_updated_device_list(devices.clone());
+            }
+            MsgIn::MakeDeviceActive { device_id } => {
+                let device_key = find_device_key_by_id(devices.clone(), &device_id);
+                let mut device = devices.map.get_mut(&device_key).unwrap();
+                device.active = true;
+                // debug!("devices: {:?}", devices);
+                let make_device_active = MsgOut::MakeDeviceActiveEvent {
+                    device_id: device_id,
+                };
+                send_to_all_devices(make_device_active, devices.clone())
+            }
+            MsgIn::PlayTrack { collection, path, track_position } => {
+                debug!("PlayTrack: {} {} {}", collection, path, track_position);
+                let play_track = MsgOut::PlayTrackEvent { collection: collection, path: path, track_position: track_position };
+                send_to_all_devices(play_track, devices.clone())
+            }
+            MsgIn::NextTrack { track } => todo!(),
+            MsgIn::Pause {} => {
+                let pause = MsgOut::PauseEvent { };
+                send_to_all_devices_excluding(pause, devices.clone(), Some(addr))
+            },
+            MsgIn::Resume {} => {
+                let resume = MsgOut::ResumeEvent { };
+                send_to_all_devices_excluding(resume, devices.clone(), Some(addr))
+            },
+            MsgIn::SwitchShuffle { mode } => {
+                let switch_shuffle = MsgOut::SwitchShuffleEvent { mode: mode };
+                send_to_all_devices_excluding(switch_shuffle, devices.clone(), Some(addr))
+            },
+            MsgIn::CurrentPos { collection, path, track_position, time } => {
+                let current_pos = MsgOut::CurrentPosEvent { collection: collection, path: path, track_position: track_position, time: time };
+                send_to_all_devices_excluding(current_pos, devices.clone(), Some(addr))
+            },
+            MsgIn::RewindTo { time } => {
+                let rewind_to = MsgOut::RewindToEvent { time: time };
+                send_to_all_devices_excluding(rewind_to, devices.clone(), Some(addr))
+            },
+        },
+        Err(e) => {
+            error!("Client message error: {}", e);
+        }
+    }
+}
+
+fn find_device_key_by_id(devices: Arc<Devices>, device_id: &str) -> SocketAddr {
+    let ref_key_value = devices.map.iter()
+        .find(|ref_multi| ref_multi.value().id == device_id)
+        .unwrap();
+    return *ref_key_value.key();
+}
+
+fn send_updated_device_list(devices: Arc<Devices>) {
+    tokio::spawn(async move {
+        debug!("creating device list...");
+        let device_list: Vec<ClientDevice> = devices.map
+            .iter()
+            .map(|ref_multi| { 
+                let d = ref_multi.value();
+                ClientDevice {
+                    name: d.name.as_ref().unwrap().clone(),
+                    id: d.id.clone(),
+                    active: d.active,
+                }
+            })
+            .collect();
+        debug!("device list: {:?}", device_list);
+        let reg_device = MsgOut::DevicesOnlineEvent {
+            devices: device_list,
+        };
+        debug!("out msg: {:?}", reg_device);
+        send_to_all_devices(reg_device, devices.clone())
+    });
+}
+
+fn send_to_device(msg: MsgOut, devices: Arc<Devices>, addr: SocketAddr) {
+    tokio::spawn(async move {
+        let m = Msg(msg);
+        debug!("Sending msg to {}: {:?}", addr, m);
+        let device = devices.map.get(&addr).unwrap();
+        match device.ws.unbounded_send(Message::Text(serde_json::to_string(&m).unwrap())) {
+            Ok(_) => {
+                debug!("Sent to device");
+            },
+            Err(err) => {
+                error!("Error while sending: {}", err);
+            }
+        }
+    });
+}
+
+fn send_to_all_devices(msg: MsgOut, devices: Arc<Devices>) {
+    send_to_all_devices_excluding(msg, devices.clone(), None);
+}
+
+fn send_to_all_devices_excluding(msg: MsgOut, devices: Arc<Devices>, device_to_exclude: Option<SocketAddr>) {
+    tokio::spawn(async move {
+        let m = Msg(msg);
+        debug!("Sending msg to all but {:?}: {:?}", device_to_exclude, m);
+        let inactive_devices: Vec<SocketAddr> = devices.map.iter()
+            .filter(|ref_multi| {
+                device_to_exclude.is_none() || (device_to_exclude.is_some() && *ref_multi.key() != device_to_exclude.unwrap())
+            })
+            .map(|ref_multi| {
+                let socket_addr = ref_multi.key();
+                let device = ref_multi.value();
+                // debug!("Sending {:?}", &m);
+                match device.ws.unbounded_send(Message::Text(serde_json::to_string(&m).unwrap())) {
+                    Ok(_) => {
+                        // debug!("Sent");
+                        None
+                    },
+                    Err(err) => {
+                        error!("Error while sending: {}", err);
+                        Some(socket_addr.to_owned())
+                    }
+                }
+            })
+            .filter(|opt_socket| opt_socket.is_some())
+            .map(|opt_socket| opt_socket.unwrap()) 
+            .collect();
+
+        // debug!("Sent msg to everyone: {:?}", m);
+        remove_devices(devices.clone(), inactive_devices);
+    });
+}
+
+fn remove_devices(devices: Arc<Devices>, to_remove: Vec<SocketAddr>) {
+    if !to_remove.is_empty() {
+        debug!("Removing {} inactive devices", to_remove.len());
+        to_remove.into_iter().for_each(|socket_addr| {
+            devices.map.remove(&socket_addr);
+            ()
+        });
+        debug!("Removed all inactive devices");
     }
 }
 
@@ -838,5 +1196,19 @@ mod tests {
         } else {
             panic!("should be invalid")
         }
+    }
+
+    #[test]
+    fn test_json() {
+        let s = serde_json::to_string(&MsgIn::RegisterDevice {
+            name: "Android".to_string(),
+        });
+        println!("json: {}", s.unwrap());
+
+        let json = r#"
+        {"RegisterDevice":{"name":"Android"}}
+        "#;
+        let message: Result<MsgIn, Error> = json.parse();
+        println!("msg: {:?}", message.unwrap());
     }
 }

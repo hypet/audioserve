@@ -9,15 +9,15 @@ use error::{bail, Context, Error};
 use futures::prelude::*;
 use hyper::{service::make_service_fn, Server as HttpServer};
 use ring::rand::{SecureRandom, SystemRandom};
+use services::Devices;
 use services::{
-    auth::SharedSecretAuthenticator, search::Search, ServiceFactory, TranscodingDetails,
+    auth::SharedSecretAuthenticator, search::Search, ServiceFactory, 
 };
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::process;
-use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -121,6 +121,10 @@ fn create_collections() -> anyhow::Result<Arc<Collections>> {
     ))
 }
 
+fn create_devices() -> anyhow::Result<Arc<Devices>> {
+    Ok(Arc::new(Devices::new()))
+}
+
 #[cfg(feature = "shared-positions")]
 fn restore_positions<P: AsRef<Path>>(backup_file: collection::BackupFile<P>) -> anyhow::Result<()> {
     let opt = create_collections_options()?;
@@ -133,69 +137,75 @@ fn restore_positions<P: AsRef<Path>>(backup_file: collection::BackupFile<P>) -> 
     .map_err(Error::new)
 }
 
+fn create_server(
+    server_secret: Vec<u8>,
+    collections: Arc<Collections>,
+    devices: Arc<Devices>,
+) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send>> {
+    let cfg = get_config();
+    let addr = cfg.listen;
+    let authenticator = get_config().shared_secret.as_ref().map(|secret| {
+        SharedSecretAuthenticator::new(secret.clone(), server_secret, cfg.token_validity_hours)
+    });
+    let svc_factory = ServiceFactory::new(
+        authenticator,
+        Search::new(Some(collections.clone())),
+        collections,
+        devices,
+        cfg.limit_rate,
+    );
+
+    let server = HttpServer::bind(&addr).serve(make_service_fn(
+        move |conn: &hyper::server::conn::AddrStream| {
+            let remote_addr = conn.remote_addr();
+            svc_factory.create(remote_addr, false)
+        },
+    ));
+    info!("Server listening on {}{}", &addr, get_url_path!());
+    return Box::pin(server.map_err(|e| e.into()));
+}
+
 fn start_server(
     server_secret: Vec<u8>,
     collections: Arc<Collections>,
+    devices: Arc<Devices>,
 ) -> (tokio::runtime::Runtime, oneshot::Receiver<()>) {
     let cfg = get_config();
 
-    let addr = cfg.listen;
     let start_server = async move {
-        let authenticator = get_config().shared_secret.as_ref().map(|secret| {
-            SharedSecretAuthenticator::new(secret.clone(), server_secret, cfg.token_validity_hours)
-        });
-        let transcoding = TranscodingDetails {
-            transcodings: Arc::new(AtomicUsize::new(0)),
-            max_transcodings: cfg.transcoding.max_parallel_processes,
-        };
-        let svc_factory = ServiceFactory::new(
-            authenticator,
-            Search::new(Some(collections.clone())),
-            transcoding,
-            collections,
-            cfg.limit_rate,
-        );
+    let server: Pin<Box<dyn Future<Output = Result<(), Error>> + Send>> = create_server(server_secret, collections, devices);
+    // TODO: Make TLS work again
+    // match get_config().ssl.as_ref() {
+        // None => {
+        // }
+        // Some(ssl) => {
+        //     #[cfg(feature = "tls")]
+        //     {
+        //         info!("Server listening on {}{} with TLS", &addr, get_url_path!());
+        //         let create_server = async move {
+        //             let incoming = tls::tls_acceptor(addr, ssl)?;
+        //             let server = HttpServer::builder(incoming)
+        //                 .serve(make_service_fn(move |conn: &TlsStream| {
+        //                     let remote_addr = conn.remote_addr();
+        //                     svc_factory.create(remote_addr, *conn, true)
+        //                 }))
+        //                 .await;
 
-        let server: Pin<Box<dyn Future<Output = Result<(), Error>> + Send>> =
-            match get_config().ssl.as_ref() {
-                None => {
-                    let server = HttpServer::bind(&addr).serve(make_service_fn(
-                        move |conn: &hyper::server::conn::AddrStream| {
-                            let remote_addr = conn.remote_addr();
-                            svc_factory.create(remote_addr, false)
-                        },
-                    ));
-                    info!("Server listening on {}{}", &addr, get_url_path!());
-                    Box::pin(server.map_err(|e| e.into()))
-                }
-                Some(ssl) => {
-                    #[cfg(feature = "tls")]
-                    {
-                        info!("Server listening on {}{} with TLS", &addr, get_url_path!());
-                        let create_server = async move {
-                            let incoming = tls::tls_acceptor(addr, ssl)?;
-                            let server = HttpServer::builder(incoming)
-                                .serve(make_service_fn(move |conn: &TlsStream| {
-                                    let remote_addr = conn.remote_addr();
-                                    svc_factory.create(remote_addr, true)
-                                }))
-                                .await;
+        //             server.map_err(|e| e.into())
+        //         };
 
-                            server.map_err(|e| e.into())
-                        };
+        //         Box::pin(create_server)
+        //     }
 
-                        Box::pin(create_server)
-                    }
-
-                    #[cfg(not(feature = "tls"))]
-                    {
-                        panic!(
-                            "TLS is not compiled - build with default features {:?}",
-                            ssl
-                        )
-                    }
-                }
-            };
+        //     #[cfg(not(feature = "tls"))]
+        //     {
+        //         panic!(
+        //             "TLS is not compiled - build with default features {:?}",
+        //             ssl
+        //         )
+        //     }
+        // }
+    // };
 
         server.await
     };
@@ -216,6 +226,7 @@ fn start_server(
                 futures::future::ready(())
             }),
     );
+    
     (rt, term_receiver)
 }
 
@@ -362,8 +373,9 @@ fn main() -> anyhow::Result<()> {
     };
 
     let collections = create_collections()?;
+    let devices = create_devices()?;
 
-    let (runtime, term_receiver) = start_server(server_secret, collections.clone());
+    let (runtime, term_receiver) = start_server(server_secret, collections.clone(), devices.clone());
 
     #[cfg(unix)]
     {
@@ -372,6 +384,9 @@ fn main() -> anyhow::Result<()> {
         runtime.spawn(watch_for_positions_backup_signal(collections.clone()));
     }
 
+    #[cfg(not(unix))]
+    runtime.block_on(terminate_server());
+    #[cfg(unix)]
     runtime.block_on(terminate_server(term_receiver));
 
     //graceful shutdown of server will wait till transcoding ends, so rather shut it down hard

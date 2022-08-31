@@ -1,4 +1,4 @@
-use super::transcode::{QualityLevel, TranscodingFormat};
+use super::transcode::{TranscodingFormat};
 use crate::config::get_config;
 use collection::{AudioFile, AudioFolderShort};
 use serde::Serialize;
@@ -24,53 +24,6 @@ impl From<TranscodingFormat> for TranscodingSummary {
             bitrate: f.bitrate(),
             name: f.format_name(),
         }
-    }
-}
-
-#[derive(Debug, Serialize)]
-pub struct Transcodings {
-    pub max_transcodings: usize,
-    pub low: TranscodingSummary,
-    pub medium: TranscodingSummary,
-    pub high: TranscodingSummary,
-}
-
-impl Default for Transcodings {
-    fn default() -> Self {
-        Transcodings::new()
-    }
-}
-
-impl Transcodings {
-    pub fn new() -> Self {
-        let cfg = get_config();
-        Transcodings {
-            max_transcodings: cfg.transcoding.max_parallel_processes,
-            low: cfg.transcoding.get(QualityLevel::Low).into(),
-            medium: cfg.transcoding.get(QualityLevel::Medium).into(),
-            high: cfg.transcoding.get(QualityLevel::High).into(),
-        }
-    }
-
-    pub fn for_user_agent(user_agent: &str) -> Self {
-        let alt_configs = get_config().transcoding.alt_configs();
-        if let Some(alt_configs) = alt_configs {
-            for (re, cfg) in alt_configs {
-                if re.is_match(user_agent) {
-                    debug!(
-                        "Using alternate transcoding {} config for User Agent {} ",
-                        re, user_agent
-                    );
-                    return Transcodings {
-                        max_transcodings: get_config().transcoding.max_parallel_processes,
-                        low: cfg.get(QualityLevel::Low).into(),
-                        medium: cfg.get(QualityLevel::Medium).into(),
-                        high: cfg.get(QualityLevel::High).into(),
-                    };
-                }
-            }
-        }
-        Transcodings::new()
     }
 }
 

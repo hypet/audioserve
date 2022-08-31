@@ -853,7 +853,6 @@ mod tests {
 
     #[test]
     fn test_list_dir() {
-        media_info::init();
         let lister = FolderLister::new_with_options(CollectionOptions::default().into());
         let res = lister.list_dir("/non-existent", "folder", FoldersOrdering::Alphabetical);
         assert!(res.is_err());
@@ -890,7 +889,6 @@ mod tests {
 
     #[test]
     fn test_meta() {
-        media_info::init();
         let path = Path::new(TEST_DATA_BASE).join(Path::new("test_data/01-file.mp3"));
         #[cfg(feature = "tags-encoding")]
         let res = get_audio_properties(&path, None as Option<String>);

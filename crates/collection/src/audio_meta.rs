@@ -283,18 +283,21 @@ pub trait MediaInfo<'a>: Sized {
 }
 
 mod libavformat {
+    use lofty::{Tag, TagType, ItemKey, AudioFile};
+
     use super::*;
     use std::{collections::HashSet, sync::Once};
 
     static INIT_LIBAV: Once = Once::new();
 
     pub fn init() {
-        INIT_LIBAV.call_once(media_info::init)
+        // INIT_LIBAV.call_once(media_info::init)
     }
 
     pub struct Info {
         media_file: media_info::MediaFile,
     }
+
     impl<'a> MediaInfo<'a> for Info {
         fn get_audio_info(&self, required_tags: &Option<HashSet<String>>) -> Option<AudioMeta> {
             Some(AudioMeta {
@@ -312,7 +315,7 @@ mod libavformat {
             self.media_file.chapters().map(|l| {
                 l.into_iter()
                     .map(|c| Chapter {
-                        number: c.num as u32,
+                        number: c.number as u32,
                         title: c.title,
                         start: c.start,
                         end: c.end,
@@ -327,11 +330,27 @@ mod libavformat {
             &self,
             required_tags: &Option<HashSet<String>>,
         ) -> Option<HashMap<String, String>> {
-            required_tags.as_ref().map(|tags| {
-                tags.iter()
-                    .filter_map(|tag| self.media_file.meta(tag).map(|v| (tag.to_string(), v)))
-                    .collect()
-            })
+            let mut map: HashMap<String, String> = HashMap::new();
+            let tag = match self.media_file.file.primary_tag() {
+                Some(primary_tag) => primary_tag,
+                // If the "primary" tag doesn't exist, we just grab the
+                // first tag we can find. Realistically, a tag reader would likely
+                // iterate through the tags to find a suitable one.
+                None => match self.media_file.file.first_tag() {
+                    Some(first_tag) => first_tag,
+                    None => {
+                        map.insert("Title".to_string(), self.media_file.file_name.clone());
+                        return Some(map);
+                    }
+                },
+            };
+
+            // println!("Title: {}", tag.get_string(&ItemKey::TrackTitle).unwrap_or("None"));
+            map.insert("Artist".to_string(), tag.get_string(&ItemKey::TrackArtist).unwrap_or("None").to_string());
+            map.insert("Title".to_string(), tag.get_string(&ItemKey::TrackTitle).unwrap_or("None").to_string());
+            map.insert("Year".to_string(), tag.get_string(&ItemKey::Year).unwrap_or("None").to_string());
+            map.insert("Genre".to_string(), tag.get_string(&ItemKey::Genre).unwrap_or("None").to_string());
+            Some(map)
         }
 
         pub fn from_file(
@@ -372,7 +391,7 @@ pub fn get_audio_properties(
 }
 
 pub fn init_media_lib() {
-    libavformat::init()
+    libavformat::init();
 }
 
 #[cfg(test)]

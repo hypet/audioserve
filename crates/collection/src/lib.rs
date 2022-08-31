@@ -9,7 +9,6 @@ use common::{Collection, CollectionTrait, PositionsTrait};
 pub use common::{CollectionOptions, CollectionOptionsMap};
 use error::{Error, Result};
 use legacy_pos::LegacyPositions;
-pub use media_info::tags;
 use no_cache::CollectionDirect;
 pub use position::{Position, PositionFilter};
 use serde_json::{Map, Value};

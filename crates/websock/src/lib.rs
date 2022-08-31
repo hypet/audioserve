@@ -109,6 +109,7 @@ where
                                 }
 
                                 Ok(Some(msg)) => {
+                                    // ws
                                     match msg {
                                         Ok(m) => {
                                             let reply: Option<Message> = match m.inner {
@@ -220,6 +221,7 @@ pub fn upgrade_connection<T: Send>(
         .and_then(|upgraded| async {
             debug!("Connection upgraded to websocket");
             let r = WebSocket::new_with_context(upgraded, ctx).await;
+            // r.inner.split()
             Ok(r)
         });
 
@@ -249,6 +251,7 @@ impl<T> WebSocket<T> {
     /// Creates new WebSocket from an upgraded connection with default context
     pub(crate) async fn new_with_context(upgraded: hyper::upgrade::Upgraded, context: T) -> Self {
         let inner = WebSocketStream::from_raw_socket(upgraded, protocol::Role::Server, None).await;
+        // inner.split()
         WebSocket { inner, context }
     }
 

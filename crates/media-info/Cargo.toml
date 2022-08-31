@@ -1,0 +1,10 @@
+[package]
+name = "media-info"
+version = "0.2.0"
+authors = ["Ivan <ivan.zderadicka@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+thiserror = "1.0"
+encoding = {version="0.2", optional=true}
+lofty = "0.7.3"

@@ -7,7 +7,6 @@ use crate::{
     AudioFolderShort, FoldersOrdering, Position,
 };
 use enum_dispatch::enum_dispatch;
-use media_info::tags::{ALLOWED_TAGS, BASIC_TAGS};
 use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -127,13 +126,13 @@ impl CollectionOptions {
                             let tags = tags
                                 .split('+')
                                 .map(|s| s.trim().to_ascii_lowercase())
-                                .map(|s| {
-                                    if ALLOWED_TAGS.contains(&s.as_str()) {
-                                        Ok(s)
-                                    } else {
-                                        invalid_option!("This tag {} is not allowed", s);
-                                    }
-                                })
+                                .map(|s| { Ok(s) })
+                                //     if ALLOWED_TAGS.contains(&s.as_str()) {
+                                //         Ok(s)
+                                //     } else {
+                                //         invalid_option!("This tag {} is not allowed", s);
+                                //     }
+                                // })
                                 .collect::<Result<HashSet<_>>>()?;
                             self.tags = Some(tags);
                         } else {
@@ -142,7 +141,8 @@ impl CollectionOptions {
                     }
                     "default-tags" => {
                         if bool_val()? {
-                            self.tags = Some(BASIC_TAGS.iter().map(|i| i.to_string()).collect())
+                            self.tags = None
+                            // self.tags = Some(BASIC_TAGS.iter().map(|i| i.to_string()).collect())
                         } else {
                             self.tags = None
                         }
