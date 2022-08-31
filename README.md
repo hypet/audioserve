@@ -1,8 +1,8 @@
 # Audioserve
 
-This fork will be a little bit different. I want to make it controllable over network. So, any connected audioserve client may act like player and others like remote controls.
+This fork will be a little bit different. I want to make it controllable over network. So, any connected audioserve client may act like a player and others like remote controls.
 The main use case is when you have separate device at home which plays music (no matter where music collection is) and you want to remotely control it. Like Jellyfin but with directory-based navigation over music collection.
-Also I decided to remove unnecessary (for me) transcoding feature for simplicity sake.
+Also I decided to remove unnecessary (for me) transcoding feature for simplicity sake (sorry).
 
 **[New web client](https://github.com/hypet/audioserve-web) is now default. If you do not like it let me know (old client is available, but you'll need to enable it yourself, [see below](#web-client))**
 
