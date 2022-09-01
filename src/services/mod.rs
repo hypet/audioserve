@@ -24,13 +24,13 @@ use hyper::{
         HeaderValue, CONNECTION, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_VERSION,
         UPGRADE,
     },
-    server::conn::AddrStream,
-    service::{make_service_fn, service_fn, Service},
+    service::{Service},
     upgrade::Upgraded,
-    Body, Method, Request, Response, Server, StatusCode, Version,
+    Body, Method, Request, Response, StatusCode, 
 };
 use leaky_cauldron::Leaky;
 use percent_encoding::percent_decode;
+use rand::Rng;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
@@ -41,7 +41,8 @@ use uuid::Uuid;
 // use std::fmt::Result;
 use std::iter::FromIterator;
 use std::str::FromStr;
-// use std::sync::Mutex;
+use std::sync::Mutex;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::{
     borrow::Cow,
@@ -95,17 +96,23 @@ struct ClientDevice {
 pub struct Devices {
     // map: TracingMutex<HashMap<SocketAddr, Device>>,
     map: DashMap<SocketAddr, Device>,
+    shuffle_mode: Mutex<ShuffleMode>,
+    current_collection: AtomicUsize,
+    current_dir: Mutex<String>,
 }
 
 impl Devices {
     pub fn new() -> Self {
         Devices {
             map: DashMap::new(),
+            shuffle_mode: Mutex::new(ShuffleMode::Off),
+            current_collection: AtomicUsize::new(0),
+            current_dir: Mutex::new("/".to_string()),
         }
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
 enum ShuffleMode {
     Off,
     CurrentDir,
@@ -117,12 +124,12 @@ enum ShuffleMode {
 enum MsgIn {
     RegisterDevice { name: String },
     MakeDeviceActive { device_id: String },
-    PlayTrack { collection: u32, path: String, track_position: u32 },
-    NextTrack { track: String },
+    PlayTrack { collection: usize, dir: String, track_position: u32 },
+    NextTrack { collection: usize, dir: String },
     Pause {},
     Resume {},
     SwitchShuffle { mode: ShuffleMode },
-    CurrentPos { collection: u32, path: String, track_position: u32, time: f32 },
+    CurrentPos { collection: usize, path: String, track_position: u32, time: f32 },
     RewindTo { time: f32 },
     VolumeChange { value: u8 },
 }
@@ -141,13 +148,13 @@ enum MsgOut {
     RegisterDeviceEvent { device_id: String },
     DevicesOnlineEvent { devices: Vec<ClientDevice> },
     MakeDeviceActiveEvent { device_id: String },
-    PlayTrackEvent { collection: u32, path: String, track_position: u32 },
+    PlayTrackEvent { collection: usize, dir: String, track_position: u32 },
     NextTrackEvent { track: String },
     RewindTrackToTime {},
     PauseEvent {},
     ResumeEvent {},
     SwitchShuffleEvent { mode: ShuffleMode },
-    CurrentPosEvent { collection: u32, path: String, track_position: u32, time: f32 },
+    CurrentPosEvent { collection: usize, path: String, track_position: u32, time: f32 },
     RewindToEvent { time: f32 },
     VolumeChangeEvent { value: u8 },
 }
@@ -801,6 +808,7 @@ impl<C: 'static> FileSendService<C> {
 
 async fn handle_connection(
     ws_stream: WebSocketStream<Upgraded>,
+    collections: Arc<Collections>,
     devices: Arc<Devices>,
     addr: SocketAddr,
 ) {
@@ -825,7 +833,7 @@ async fn handle_connection(
         match msg {
             Message::Text(string) => {
                 debug!("Received a message from {}: {}", addr, string);
-                process_message(string, devices.clone(), addr);
+                process_message(string, collections.clone(), devices.clone(), addr);
             }
             Message::Binary(_) => {
                 error!("Message from {}. Binary messaging is not supported", addr)
@@ -899,6 +907,7 @@ pub fn handle_request(
                 trace!("upgraded connection");
                 handle_connection(
                     WebSocketStream::from_raw_socket(upgraded, Role::Server, None).await,
+                    collections,
                     devices,
                     addr,
                 )
@@ -917,7 +926,7 @@ pub fn handle_request(
     Box::pin(future::ok(res))
 }
 
-fn process_message(msg: String, devices: Arc<Devices>, addr: SocketAddr) {
+fn process_message(msg: String, collections: Arc<Collections>, devices: Arc<Devices>, addr: SocketAddr) {
     debug!("Got message {:?} from {}", msg, addr);
     let message: Result<MsgIn, Error> = msg.parse();
 
@@ -945,12 +954,35 @@ fn process_message(msg: String, devices: Arc<Devices>, addr: SocketAddr) {
                 };
                 send_to_all_devices(make_device_active, devices.clone())
             }
-            MsgIn::PlayTrack { collection, path, track_position } => {
-                debug!("PlayTrack: {} {} {}", collection, path, track_position);
-                let play_track = MsgOut::PlayTrackEvent { collection: collection, path: path, track_position: track_position };
+            MsgIn::PlayTrack { collection, dir, track_position } => {
+                debug!("PlayTrack: {} {} {}", collection, dir, track_position);
+                let play_track = MsgOut::PlayTrackEvent { collection: collection, dir: dir, track_position: track_position };
                 send_to_all_devices(play_track, devices.clone())
             }
-            MsgIn::NextTrack { track } => todo!(),
+            MsgIn::NextTrack { collection, dir } => {
+                let shuffle_mode = devices.shuffle_mode.lock().unwrap().to_owned();
+                // let current_collection = devices.current_collection.load(Ordering::SeqCst);
+                // let current_dir = devices.current_dir.lock().unwrap().to_string();
+                let collections = collections.clone();
+                match shuffle_mode {
+                    ShuffleMode::Off => {
+                        debug!("Shuffle is off");
+                    },
+                    ShuffleMode::CurrentDir => {
+                        debug!("Current dir");
+                        let track_count = collections.count_files_in_dir(collection, PathBuf::from(dir.clone())).unwrap();
+                        let rnd: u32 = rand::thread_rng().gen_range(0..(track_count)) as u32;
+                        let play_track = MsgOut::PlayTrackEvent { collection: collection, dir: dir, track_position: rnd };
+                        send_to_all_devices(play_track, devices.clone())
+                    },
+                    ShuffleMode::CollectionWide => {
+                        debug!("CollectionWide");
+                    },
+                    ShuffleMode::Global => {
+                        debug!("Global");
+                    },
+                }
+            },
             MsgIn::Pause {} => {
                 let pause = MsgOut::PauseEvent { };
                 send_to_all_devices_excluding(pause, devices.clone(), Some(addr))
@@ -960,6 +992,8 @@ fn process_message(msg: String, devices: Arc<Devices>, addr: SocketAddr) {
                 send_to_all_devices_excluding(resume, devices.clone(), Some(addr))
             },
             MsgIn::SwitchShuffle { mode } => {
+                let mut mutex = devices.shuffle_mode.lock().unwrap();
+                *mutex = mode.clone();
                 let switch_shuffle = MsgOut::SwitchShuffleEvent { mode: mode };
                 send_to_all_devices_excluding(switch_shuffle, devices.clone(), Some(addr))
             },

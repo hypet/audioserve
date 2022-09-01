@@ -99,6 +99,7 @@ dependencies = [
  "num_cpus",
  "percent-encoding",
  "proxy-headers",
+ "rand 0.8.5",
  "regex",
  "reqwest",
  "ring",

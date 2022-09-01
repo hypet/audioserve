@@ -123,6 +123,11 @@ impl Collections {
             .list_dir(dir_path, ordering, group)
     }
 
+    pub fn count_files_in_dir<P: AsRef<Path>>(&self, collection: usize, dir_path: P) -> Result<usize> {
+        self.get_cache(collection)?
+            .count_files_in_dir(dir_path)
+    }
+
     pub fn flush(&self) -> Result<()> {
         let mut result = vec![];
         for c in &self.caches {

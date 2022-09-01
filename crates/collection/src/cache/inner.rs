@@ -79,6 +79,17 @@ impl CacheInner {
             .map_err(Error::from)
     }
 
+    pub(crate) fn count_files<P: AsRef<Path>>(
+        &self,
+        dir_path: P,
+    ) -> Result<usize> {
+        let dir = self.lister
+            .list_dir(&self.base_dir, &dir_path, FoldersOrdering::Alphabetical)
+            .map_err(Error::from).unwrap();
+        debug!("inner count_files_in_dir {:?}: {}", &dir_path.as_ref().display(), dir.files.len());
+        Ok(dir.files.len())
+    }
+
     pub(crate) fn iter_folders(&self) -> sled::Iter {
         self.db.iter()
     }

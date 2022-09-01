@@ -395,6 +395,15 @@ impl CollectionTrait for CollectionCache {
     fn base_dir(&self) -> &Path {
         self.inner.base_dir()
     }
+
+    fn count_files_in_dir<P>(
+        &self,
+        dir_path: P
+    ) -> Result<usize>
+    where
+        P: AsRef<Path> {
+        self.inner.count_files(dir_path)
+    }
 }
 
 impl Drop for CollectionCache {

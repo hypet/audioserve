@@ -9,7 +9,7 @@ use crate::common::{CollectionOptions, CollectionTrait, PositionsData, Positions
 use crate::error::{Error, Result};
 use crate::position::PositionsCollector;
 use crate::util::get_real_file_type;
-use crate::AudioFolderShort;
+use crate::{AudioFolderShort, FoldersOrdering};
 
 pub(crate) struct CollectionDirect {
     lister: FolderLister,
@@ -61,6 +61,20 @@ impl CollectionTrait for CollectionDirect {
 
     fn base_dir(&self) -> &Path {
         self.base_dir.as_path()
+    }
+
+    fn count_files_in_dir<P>(
+        &self,
+        dir_path: P
+    ) -> Result<usize>
+    where
+        P: AsRef<Path> {
+        let dir = self.lister
+            .list_dir(&self.base_dir, &dir_path, FoldersOrdering::Alphabetical)
+            .map_err(Error::from).unwrap();
+        
+        debug!("no_cache count_files_in_dir {:?}: {}", dir_path.as_ref().display(), dir.files.len());
+        Ok(dir.files.len())
     }
 }
 

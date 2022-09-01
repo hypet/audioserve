@@ -259,6 +259,13 @@ pub(crate) trait CollectionTrait {
     where
         P: AsRef<Path>;
 
+    fn count_files_in_dir<P>(
+        &self,
+        dir_path: P
+    ) -> Result<usize>
+    where
+        P: AsRef<Path>;
+
     fn flush(&self) -> Result<()>;
 
     fn search<S: AsRef<str>>(&self, q: S, group: Option<String>) -> Vec<AudioFolderShort>;
