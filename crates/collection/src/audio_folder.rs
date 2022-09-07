@@ -1008,4 +1008,15 @@ mod tests {
             "Follet Ken/Srsen leta v noci/CD1/01 Srsen leta v noci.opus"
         );
     }
+
+    #[test]
+    fn test_file() {
+        let path = Path::new(r"f:\music\!Hard\Linkin Park\01-Linkin Park--Wake.mp3");
+        let set: HashSet<String> = vec!["title", "album", "artist", "composer"].into_iter().map(String::from).collect();
+        let audio_info = get_audio_properties(&path);
+        let media_info = audio_info.unwrap();
+        let meta = media_info.get_audio_info(&Some(set)).unwrap();
+        println!("meta: {:?}", meta);
+    }
+
 }

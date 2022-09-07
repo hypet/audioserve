@@ -288,12 +288,6 @@ mod libavformat {
     use super::*;
     use std::{collections::HashSet, sync::Once};
 
-    static INIT_LIBAV: Once = Once::new();
-
-    pub fn init() {
-        // INIT_LIBAV.call_once(media_info::init)
-    }
-
     pub struct Info {
         media_file: media_info::MediaFile,
     }
@@ -390,18 +384,17 @@ pub fn get_audio_properties(
     libavformat::Info::from_file(audio_file_path, alternate_encoding)
 }
 
-pub fn init_media_lib() {
-    libavformat::init();
-}
-
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
+
+    use crate::util::get_meta;
 
     use super::*;
 
     #[test]
     fn test_is_audio() {
+        println!("meta: {:?}", get_meta(r"f:\music\!Hard\\Linkin Park\\01-Linkin Park--Wake.mp3").unwrap());
         assert!(is_audio("my/song.mp3"));
         assert!(is_audio("other/chapter.opus"));
         assert!(!is_audio("cover.jpg"));

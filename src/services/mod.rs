@@ -31,6 +31,7 @@ use hyper::{
 use leaky_cauldron::Leaky;
 use percent_encoding::percent_decode;
 use rand::Rng;
+use rand::seq::SliceRandom;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
@@ -94,11 +95,10 @@ struct ClientDevice {
 
 #[derive(Debug)]
 pub struct Devices {
-    // map: TracingMutex<HashMap<SocketAddr, Device>>,
     map: DashMap<SocketAddr, Device>,
     shuffle_mode: Mutex<ShuffleMode>,
-    current_collection: AtomicUsize,
-    current_dir: Mutex<String>,
+    cur_dir_shuffle_tracks: Mutex<Vec<usize>>,
+    cur_dir_shuffle_cursor: AtomicUsize,
 }
 
 impl Devices {
@@ -106,8 +106,8 @@ impl Devices {
         Devices {
             map: DashMap::new(),
             shuffle_mode: Mutex::new(ShuffleMode::Off),
-            current_collection: AtomicUsize::new(0),
-            current_dir: Mutex::new("/".to_string()),
+            cur_dir_shuffle_tracks: Mutex::new(vec![]),
+            cur_dir_shuffle_cursor: AtomicUsize::new(0),
         }
     }
 }
@@ -948,7 +948,6 @@ fn process_message(msg: String, collections: Arc<Collections>, devices: Arc<Devi
                 let device_key = find_device_key_by_id(devices.clone(), &device_id);
                 let mut device = devices.map.get_mut(&device_key).unwrap();
                 device.active = true;
-                // debug!("devices: {:?}", devices);
                 let make_device_active = MsgOut::MakeDeviceActiveEvent {
                     device_id: device_id,
                 };
@@ -961,8 +960,7 @@ fn process_message(msg: String, collections: Arc<Collections>, devices: Arc<Devi
             }
             MsgIn::NextTrack { collection, dir } => {
                 let shuffle_mode = devices.shuffle_mode.lock().unwrap().to_owned();
-                // let current_collection = devices.current_collection.load(Ordering::SeqCst);
-                // let current_dir = devices.current_dir.lock().unwrap().to_string();
+                let mut cur_dir_shuffle_tracks = devices.cur_dir_shuffle_tracks.lock().unwrap();
                 let collections = collections.clone();
                 match shuffle_mode {
                     ShuffleMode::Off => {
@@ -971,8 +969,23 @@ fn process_message(msg: String, collections: Arc<Collections>, devices: Arc<Devi
                     ShuffleMode::CurrentDir => {
                         debug!("Current dir");
                         let track_count = collections.count_files_in_dir(collection, PathBuf::from(dir.clone())).unwrap();
-                        let rnd: u32 = rand::thread_rng().gen_range(0..(track_count)) as u32;
-                        let play_track = MsgOut::PlayTrackEvent { collection: collection, dir: dir, track_position: rnd };
+                        // let rnd: usize = rand::thread_rng().gen_range(0..(track_count));
+                        // cur_dir_played_tracks.insert(rnd);
+                        if devices.cur_dir_shuffle_cursor.load(Ordering::SeqCst) >= track_count {
+                            cur_dir_shuffle_tracks.clear();
+                            devices.cur_dir_shuffle_cursor.store(0, Ordering::SeqCst);
+                        }
+
+                        if cur_dir_shuffle_tracks.is_empty() {
+                            let mut shuffle_tracks: Vec<usize> = (0..track_count).collect();
+                            shuffle_tracks.shuffle(&mut rand::thread_rng());
+                            cur_dir_shuffle_tracks.extend(shuffle_tracks);
+                            devices.cur_dir_shuffle_cursor.store(0, Ordering::SeqCst);
+                        }
+                        let cursor = devices.cur_dir_shuffle_cursor.load(Ordering::SeqCst);
+                        let next_track = cur_dir_shuffle_tracks[cursor];
+                        devices.cur_dir_shuffle_cursor.compare_exchange(cursor, cursor + 1, Ordering::SeqCst, Ordering::SeqCst);
+                        let play_track = MsgOut::PlayTrackEvent { collection: collection, dir: dir, track_position: next_track as u32};
                         send_to_all_devices(play_track, devices.clone())
                     },
                     ShuffleMode::CollectionWide => {

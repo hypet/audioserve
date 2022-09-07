@@ -2,7 +2,7 @@
 extern crate log;
 
 pub use audio_folder::{list_dir_files_only, list_dir_files_with_subdirs, parse_chapter_path};
-pub use audio_meta::{init_media_lib, AudioFile, AudioFolderShort, FoldersOrdering, TimeSpan};
+pub use audio_meta::{AudioFile, AudioFolderShort, FoldersOrdering, TimeSpan};
 use audio_meta::{AudioFolder, TimeStamp};
 use cache::CollectionCache;
 use common::{Collection, CollectionTrait, PositionsTrait};

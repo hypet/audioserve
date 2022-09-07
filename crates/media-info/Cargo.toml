@@ -7,4 +7,4 @@ edition = "2018"
 [dependencies]
 thiserror = "1.0"
 encoding = {version="0.2", optional=true}
-lofty = "0.7.3"
+lofty = { path = "../../../lofty-rs" }

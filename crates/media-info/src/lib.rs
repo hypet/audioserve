@@ -45,7 +45,7 @@ impl MediaFile {
         let tagged_file = match tagged_file_res {
             Ok(file) => file,
             Err(e) => {
-                return Err(Error::InvalidFile(fname.to_string()));
+                return Err(Error::InvalidFile(e.to_string()));
             },
         };
 
@@ -69,4 +69,32 @@ impl MediaFile {
     }
 
 
+}
+
+#[cfg(test)]
+mod tests {
+    use core::panic;
+
+    use super::*;
+
+    #[test]
+    fn test_corrupt_file() {
+        let path = Path::new(r"f:\music\!Hard\Linkin Park\01-Linkin Park--Wake.mp3");
+        let tagged_file_res = Probe::open(path)
+            .expect("ERROR: Bad path provided!")
+            .read(true)
+            .unwrap();
+        
+        let tag = match tagged_file_res.primary_tag() {
+            Some(tag) => tag,
+            None => match tagged_file_res.first_tag() {
+                Some(first_tag) => first_tag,
+                None => panic!("no tags"),
+            },
+        };
+        println!("Title: {}", tag.title().unwrap_or("None"));
+        println!("Artist: {}", tag.artist().unwrap_or("None"));
+        println!("Album: {}", tag.album().unwrap_or("None"));
+        println!("Genre: {}", tag.genre().unwrap_or("None"));
+    }
 }

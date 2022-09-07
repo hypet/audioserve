@@ -323,8 +323,6 @@ fn main() -> anyhow::Result<()> {
         debug!("Started with following config {:?}", cfg);
     }
 
-    collection::init_media_lib();
-
     #[cfg(feature = "shared-positions")]
     if !matches!(
         get_config().positions.restore,

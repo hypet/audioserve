@@ -463,7 +463,7 @@ pub struct Config {
 
 impl Config {
     pub fn add_base_dir<P: AsRef<str>>(&mut self, p: P) -> Result<()> {
-        let mut parts = p.as_ref().splitn(2, ':');
+        let mut parts = p.as_ref().splitn(2, ';');
         let base_dir = parts
             .next()
             .map(PathBuf::from)
@@ -582,7 +582,7 @@ impl Config {
 
         for d in &self.base_dirs {
             if !d.is_dir() {
-                return value_error!("base_dir", "{:?} is not direcrory", d);
+                return value_error!("base_dir", "{:?} is not a directory", d);
             }
         }
 
