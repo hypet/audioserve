@@ -94,18 +94,22 @@ struct ClientDevice {
 }
 
 #[derive(Debug)]
-pub struct Devices {
-    map: DashMap<SocketAddr, Device>,
+pub struct State {
+    devices: DashMap<SocketAddr, Device>,
     shuffle_mode: Mutex<ShuffleMode>,
+    cur_coll: AtomicUsize,
+    cur_dir: Mutex<String>,
     cur_dir_shuffle_tracks: Mutex<Vec<usize>>,
     cur_dir_shuffle_cursor: AtomicUsize,
 }
 
-impl Devices {
+impl State {
     pub fn new() -> Self {
-        Devices {
-            map: DashMap::new(),
+        State {
+            devices: DashMap::new(),
             shuffle_mode: Mutex::new(ShuffleMode::Off),
+            cur_coll: AtomicUsize::new(0),
+            cur_dir: Mutex::new("/".to_string()),
             cur_dir_shuffle_tracks: Mutex::new(vec![]),
             cur_dir_shuffle_cursor: AtomicUsize::new(0),
         }
@@ -126,6 +130,7 @@ enum MsgIn {
     MakeDeviceActive { device_id: String },
     PlayTrack { collection: usize, dir: String, track_position: u32 },
     NextTrack { collection: usize, dir: String },
+    PrevTrack { collection: usize, dir: String },
     Pause {},
     Resume {},
     SwitchShuffle { mode: ShuffleMode },
@@ -149,7 +154,6 @@ enum MsgOut {
     DevicesOnlineEvent { devices: Vec<ClientDevice> },
     MakeDeviceActiveEvent { device_id: String },
     PlayTrackEvent { collection: usize, dir: String, track_position: u32 },
-    NextTrackEvent { track: String },
     RewindTrackToTime {},
     PauseEvent {},
     ResumeEvent {},
@@ -362,7 +366,7 @@ pub struct ServiceFactory<T> {
     rate_limitter: Option<Arc<Leaky>>,
     search: Search<String>,
     collections: Arc<Collections>,
-    devices: Arc<Devices>,
+    state: Arc<State>,
 }
 
 impl<T> ServiceFactory<T> {
@@ -370,7 +374,7 @@ impl<T> ServiceFactory<T> {
         auth: Option<A>,
         search: Search<String>,
         collections: Arc<Collections>,
-        devices: Arc<Devices>,
+        state: Arc<State>,
         rate_limit: Option<f32>,
     ) -> Self
     where
@@ -381,7 +385,7 @@ impl<T> ServiceFactory<T> {
             rate_limitter: rate_limit.map(|l| Arc::new(Leaky::new(l))),
             search,
             collections,
-            devices,
+            state,
         }
     }
 
@@ -395,7 +399,7 @@ impl<T> ServiceFactory<T> {
             rate_limitter: self.rate_limitter.clone(),
             search: self.search.clone(),
             collections: self.collections.clone(),
-            devices: self.devices.clone(),
+            state: self.state.clone(),
             remote_addr,
             is_ssl,
         })
@@ -408,7 +412,7 @@ pub struct FileSendService<T> {
     pub rate_limitter: Option<Arc<Leaky>>,
     pub search: Search<String>,
     pub collections: Arc<Collections>,
-    pub devices: Arc<Devices>,
+    pub state: Arc<State>,
     pub remote_addr: SocketAddr,
     pub is_ssl: bool,
 }
@@ -552,7 +556,7 @@ impl<C: 'static> FileSendService<C> {
         let resp = match self.authenticator {
             Some(ref auth) => {
                 let collections = self.collections.clone();
-                let devices = self.devices.clone();
+                let devices = self.state.clone();
                 Box::pin(auth.authenticate(req).and_then(move |result| match result {
                     AuthResult::Authenticated { request, .. } => {
                         FileSendService::<C>::process_checked(
@@ -573,7 +577,7 @@ impl<C: 'static> FileSendService<C> {
                 addr,
                 searcher,
                 self.collections.clone(),
-                self.devices.clone(),
+                self.state.clone(),
             ),
         };
         Box::pin(resp.map_ok(move |r| add_cors_headers(r, origin, cors)))
@@ -584,7 +588,7 @@ impl<C: 'static> FileSendService<C> {
         addr: SocketAddr,
         searcher: Search<String>,
         collections: Arc<Collections>,
-        devices: Arc<Devices>,
+        state: Arc<State>,
     ) -> ResponseFuture {
         let params = req.params();
         let path = req.path();
@@ -593,7 +597,7 @@ impl<C: 'static> FileSendService<C> {
                 if path.starts_with("/collections") {
                     collections_list()
                 } else if path.starts_with("/ws") {
-                    handle_request(collections, devices, req.request, addr)
+                    handle_request(collections, state, req.request, addr)
                 } else if cfg!(feature = "shared-positions") && path.starts_with("/positions") {
                     // positions API
                     #[cfg(feature = "shared-positions")]
@@ -640,7 +644,7 @@ impl<C: 'static> FileSendService<C> {
                     #[cfg(feature = "shared-positions")]
                     self::position::position_service(req, collections)
                 } else {
-                    let (path, colllection_index) = match extract_collection_number(path) {
+                    let (path, collection_index) = match extract_collection_number(path) {
                         Ok(r) => r,
                         Err(_) => {
                             error!("Invalid collection number");
@@ -648,7 +652,7 @@ impl<C: 'static> FileSendService<C> {
                         }
                     };
 
-                    let base_dir = &get_config().base_dirs[colllection_index];
+                    let base_dir = &get_config().base_dirs[collection_index];
                     let ord = params
                         .get("ord")
                         .map(|l| FoldersOrdering::from_letter(l))
@@ -665,7 +669,7 @@ impl<C: 'static> FileSendService<C> {
                     } else if path.starts_with("/folder/") {
                         let group = params.get_string("group");
                         get_folder(
-                            colllection_index,
+                            collection_index,
                             get_subpath(path, "/folder/"),
                             collections,
                             ord,
@@ -699,14 +703,14 @@ impl<C: 'static> FileSendService<C> {
                     } else if path == "/search" {
                         if let Some(search_string) = params.get_string("q") {
                             let group = params.get_string("group");
-                            search(colllection_index, searcher, search_string, ord, group)
+                            search(collection_index, searcher, search_string, ord, group)
                         } else {
                             error!("q parameter is missing in search");
                             resp::fut(resp::not_found)
                         }
                     } else if path.starts_with("/recent") {
                         let group = params.get_string("group");
-                        recent(colllection_index, searcher, group)
+                        recent(collection_index, searcher, group)
                     } else if path.starts_with("/cover/") {
                         send_file_simple(
                             base_dir,
@@ -809,7 +813,7 @@ impl<C: 'static> FileSendService<C> {
 async fn handle_connection(
     ws_stream: WebSocketStream<Upgraded>,
     collections: Arc<Collections>,
-    devices: Arc<Devices>,
+    state: Arc<State>,
     addr: SocketAddr,
 ) {
     debug!("WebSocket connection established: {}", addr);
@@ -817,7 +821,7 @@ async fn handle_connection(
     // Insert the write part of this peer to the peer map.
     let (tx, rx) = unbounded();
     let device_uuid = Uuid::new_v4().to_string();
-    devices.map.insert(
+    state.devices.insert(
         addr,
         Device {
             name: None,
@@ -833,7 +837,7 @@ async fn handle_connection(
         match msg {
             Message::Text(string) => {
                 debug!("Received a message from {}: {}", addr, string);
-                process_message(string, collections.clone(), devices.clone(), addr);
+                process_message(string, collections.clone(), state.clone(), addr);
             }
             Message::Binary(_) => {
                 error!("Message from {}. Binary messaging is not supported", addr)
@@ -841,13 +845,13 @@ async fn handle_connection(
             Message::Ping(_) | Message::Pong(_) => debug!("Received ping/pong from {}", addr),
             Message::Close(None) => {
                 debug!("{} closed websocket", addr);
-                devices.map.remove(&addr);
-                send_updated_device_list(devices.clone());
+                state.devices.remove(&addr);
+                send_updated_device_list(state.clone());
             }
             Message::Close(Some(frame)) => {
                 debug!("{} closed websocket, reason: {}", addr, frame.reason);
-                devices.map.remove(&addr);
-                send_updated_device_list(devices.clone());
+                state.devices.remove(&addr);
+                send_updated_device_list(state.clone());
             }
             Message::Frame(frame) => debug!("Received frame: {:?}", frame.into_data()),
         }
@@ -866,7 +870,7 @@ async fn handle_connection(
 
 pub fn handle_request(
     collections: Arc<Collections>,
-    devices: Arc<Devices>,
+    state: Arc<State>,
     mut req: Request<Body>,
     addr: SocketAddr,
 ) -> ResponseFuture {
@@ -908,7 +912,7 @@ pub fn handle_request(
                 handle_connection(
                     WebSocketStream::from_raw_socket(upgraded, Role::Server, None).await,
                     collections,
-                    devices,
+                    state,
                     addr,
                 )
                 .await;
@@ -926,17 +930,21 @@ pub fn handle_request(
     Box::pin(future::ok(res))
 }
 
-fn process_message(msg: String, collections: Arc<Collections>, devices: Arc<Devices>, addr: SocketAddr) {
+fn process_message(msg: String, collections: Arc<Collections>, state: Arc<State>, addr: SocketAddr) {
     debug!("Got message {:?} from {}", msg, addr);
     let message: Result<MsgIn, Error> = msg.parse();
 
-    let devices = devices.clone();
+    let devices = state.clone();
 
     match message {
         Ok(message) => match message {
             MsgIn::RegisterDevice { name } => {
-                let mut device = devices.map.get_mut(&addr).unwrap();
+                let mut device = devices.devices.get_mut(&addr).unwrap();
                 device.name = Some(name);
+                // Make first connected device active
+                if devices.devices.len() == 1 {
+                    device.active = true;
+                }
                 debug!("RegisterDevice: {:?}", device.id);
                 let reg_device_event = MsgOut::RegisterDeviceEvent {
                     device_id: device.id.clone()
@@ -946,7 +954,7 @@ fn process_message(msg: String, collections: Arc<Collections>, devices: Arc<Devi
             }
             MsgIn::MakeDeviceActive { device_id } => {
                 let device_key = find_device_key_by_id(devices.clone(), &device_id);
-                let mut device = devices.map.get_mut(&device_key).unwrap();
+                let mut device = devices.devices.get_mut(&device_key).unwrap();
                 device.active = true;
                 let make_device_active = MsgOut::MakeDeviceActiveEvent {
                     device_id: device_id,
@@ -960,41 +968,11 @@ fn process_message(msg: String, collections: Arc<Collections>, devices: Arc<Devi
             }
             MsgIn::NextTrack { collection, dir } => {
                 let shuffle_mode = devices.shuffle_mode.lock().unwrap().to_owned();
-                let mut cur_dir_shuffle_tracks = devices.cur_dir_shuffle_tracks.lock().unwrap();
-                let collections = collections.clone();
-                match shuffle_mode {
-                    ShuffleMode::Off => {
-                        debug!("Shuffle is off");
-                    },
-                    ShuffleMode::CurrentDir => {
-                        debug!("Current dir");
-                        let track_count = collections.count_files_in_dir(collection, PathBuf::from(dir.clone())).unwrap();
-                        // let rnd: usize = rand::thread_rng().gen_range(0..(track_count));
-                        // cur_dir_played_tracks.insert(rnd);
-                        if devices.cur_dir_shuffle_cursor.load(Ordering::SeqCst) >= track_count {
-                            cur_dir_shuffle_tracks.clear();
-                            devices.cur_dir_shuffle_cursor.store(0, Ordering::SeqCst);
-                        }
-
-                        if cur_dir_shuffle_tracks.is_empty() {
-                            let mut shuffle_tracks: Vec<usize> = (0..track_count).collect();
-                            shuffle_tracks.shuffle(&mut rand::thread_rng());
-                            cur_dir_shuffle_tracks.extend(shuffle_tracks);
-                            devices.cur_dir_shuffle_cursor.store(0, Ordering::SeqCst);
-                        }
-                        let cursor = devices.cur_dir_shuffle_cursor.load(Ordering::SeqCst);
-                        let next_track = cur_dir_shuffle_tracks[cursor];
-                        devices.cur_dir_shuffle_cursor.compare_exchange(cursor, cursor + 1, Ordering::SeqCst, Ordering::SeqCst);
-                        let play_track = MsgOut::PlayTrackEvent { collection: collection, dir: dir, track_position: next_track as u32};
-                        send_to_all_devices(play_track, devices.clone())
-                    },
-                    ShuffleMode::CollectionWide => {
-                        debug!("CollectionWide");
-                    },
-                    ShuffleMode::Global => {
-                        debug!("Global");
-                    },
-                }
+                process_next_track(collection, dir, shuffle_mode, collections, devices);
+            },
+            MsgIn::PrevTrack { collection, dir } => {
+                let shuffle_mode = devices.shuffle_mode.lock().unwrap().to_owned();
+                process_prev_track(collection, dir, shuffle_mode, collections, devices);
             },
             MsgIn::Pause {} => {
                 let pause = MsgOut::PauseEvent { };
@@ -1029,17 +1007,92 @@ fn process_message(msg: String, collections: Arc<Collections>, devices: Arc<Devi
     }
 }
 
-fn find_device_key_by_id(devices: Arc<Devices>, device_id: &str) -> SocketAddr {
-    let ref_key_value = devices.map.iter()
+fn process_prev_track(collection: usize, dir: String, shuffle_mode: ShuffleMode, collections: Arc<Collections>, devices: Arc<State>) {
+    match shuffle_mode {
+        ShuffleMode::Off => {
+            debug!("Shuffle is off");
+        },
+        ShuffleMode::CurrentDir => {
+            let cur_dir_shuffle_tracks = devices.cur_dir_shuffle_tracks.lock().unwrap();
+            if cur_dir_shuffle_tracks.is_empty() || devices.cur_dir_shuffle_cursor.load(Ordering::SeqCst) == 0 {
+                debug!("No previously played tracks");
+            } else {
+                let cursor = devices.cur_dir_shuffle_cursor.load(Ordering::SeqCst);
+                let prev_track = cur_dir_shuffle_tracks[cursor];
+                devices.cur_dir_shuffle_cursor.compare_exchange(cursor, cursor - 1, Ordering::SeqCst, Ordering::SeqCst);
+                let play_track = MsgOut::PlayTrackEvent { collection: collection, dir: dir, track_position: prev_track as u32};
+                send_to_all_devices(play_track, devices.clone())
+            }
+        },
+        ShuffleMode::CollectionWide => {
+            debug!("CollectionWide");
+        },
+        ShuffleMode::Global => {
+            debug!("Global");
+        },
+    }
+}
+
+fn process_next_track(collection: usize, dir: String, shuffle_mode: ShuffleMode, collections: Arc<Collections>, devices: Arc<State>) {
+    match shuffle_mode {
+        ShuffleMode::Off => {
+            debug!("Shuffle is off");
+        },
+        ShuffleMode::CurrentDir => {
+            let mut cur_dir_shuffle_tracks = devices.cur_dir_shuffle_tracks.lock().unwrap();
+            let cur_coll = devices.cur_coll.load(Ordering::SeqCst);
+            if cur_coll != collection {
+                debug!("coll differs. Was: {}, now: {}", cur_coll, collection);
+                devices.cur_coll.store(collection, Ordering::SeqCst);
+            }
+            let mut cur_dir = devices.cur_dir.lock().unwrap();
+            if !dir.eq(&*cur_dir) {
+                debug!("dir differs. Was: {}, now: {}", cur_dir, dir);
+                *cur_dir = dir.clone();
+            }
+            let track_count = collections.count_files_in_dir(collection, PathBuf::from(dir.clone())).unwrap();
+            if devices.cur_dir_shuffle_cursor.load(Ordering::SeqCst) >= track_count {
+                debug!("reached end of tracks, clearing played tracks");
+                cur_dir_shuffle_tracks.clear();
+                devices.cur_dir_shuffle_cursor.store(0, Ordering::SeqCst);
+            }
+
+            if cur_dir_shuffle_tracks.is_empty() {
+                debug!("shuffle tracks is empty");
+                let mut shuffle_tracks: Vec<usize> = (0..track_count).collect();
+                shuffle_tracks.shuffle(&mut rand::thread_rng());
+                debug!("shuffle_tracks: {:?}", shuffle_tracks);
+                cur_dir_shuffle_tracks.extend(shuffle_tracks);
+                devices.cur_dir_shuffle_cursor.store(0, Ordering::SeqCst);
+            }
+            let cursor = devices.cur_dir_shuffle_cursor.load(Ordering::SeqCst);
+            let next_track = cur_dir_shuffle_tracks[cursor];
+            debug!("cursor: {}, next_track: {}", cursor, next_track);
+            let res = devices.cur_dir_shuffle_cursor.compare_exchange(cursor, cursor + 1, Ordering::SeqCst, Ordering::SeqCst);
+            let play_track = MsgOut::PlayTrackEvent { collection: collection, dir: dir, track_position: next_track as u32};
+            send_to_all_devices(play_track, devices.clone())
+        },
+        ShuffleMode::CollectionWide => {
+            debug!("CollectionWide");
+            collections.list_dir(collection, dir_path, ordering, group)
+        },
+        ShuffleMode::Global => {
+            debug!("Global");
+        },
+    }
+}
+
+fn find_device_key_by_id(devices: Arc<State>, device_id: &str) -> SocketAddr {
+    let ref_key_value = devices.devices.iter()
         .find(|ref_multi| ref_multi.value().id == device_id)
         .unwrap();
     return *ref_key_value.key();
 }
 
-fn send_updated_device_list(devices: Arc<Devices>) {
+fn send_updated_device_list(devices: Arc<State>) {
     tokio::spawn(async move {
         debug!("creating device list...");
-        let device_list: Vec<ClientDevice> = devices.map
+        let device_list: Vec<ClientDevice> = devices.devices
             .iter()
             .map(|ref_multi| { 
                 let d = ref_multi.value();
@@ -1059,11 +1112,11 @@ fn send_updated_device_list(devices: Arc<Devices>) {
     });
 }
 
-fn send_to_device(msg: MsgOut, devices: Arc<Devices>, addr: SocketAddr) {
+fn send_to_device(msg: MsgOut, devices: Arc<State>, addr: SocketAddr) {
     tokio::spawn(async move {
         let m = Msg(msg);
         debug!("Sending msg to {}: {:?}", addr, m);
-        let device = devices.map.get(&addr).unwrap();
+        let device = devices.devices.get(&addr).unwrap();
         match device.ws.unbounded_send(Message::Text(serde_json::to_string(&m).unwrap())) {
             Ok(_) => {
                 debug!("Sent to device");
@@ -1075,15 +1128,15 @@ fn send_to_device(msg: MsgOut, devices: Arc<Devices>, addr: SocketAddr) {
     });
 }
 
-fn send_to_all_devices(msg: MsgOut, devices: Arc<Devices>) {
+fn send_to_all_devices(msg: MsgOut, devices: Arc<State>) {
     send_to_all_devices_excluding(msg, devices.clone(), None);
 }
 
-fn send_to_all_devices_excluding(msg: MsgOut, devices: Arc<Devices>, device_to_exclude: Option<SocketAddr>) {
+fn send_to_all_devices_excluding(msg: MsgOut, devices: Arc<State>, device_to_exclude: Option<SocketAddr>) {
     tokio::spawn(async move {
         let m = Msg(msg);
         debug!("Sending msg to all but {:?}: {:?}", device_to_exclude, m);
-        let inactive_devices: Vec<SocketAddr> = devices.map.iter()
+        let inactive_devices: Vec<SocketAddr> = devices.devices.iter()
             .filter(|ref_multi| {
                 device_to_exclude.is_none() || (device_to_exclude.is_some() && *ref_multi.key() != device_to_exclude.unwrap())
             })
@@ -1111,11 +1164,11 @@ fn send_to_all_devices_excluding(msg: MsgOut, devices: Arc<Devices>, device_to_e
     });
 }
 
-fn remove_devices(devices: Arc<Devices>, to_remove: Vec<SocketAddr>) {
+fn remove_devices(devices: Arc<State>, to_remove: Vec<SocketAddr>) {
     if !to_remove.is_empty() {
         debug!("Removing {} inactive devices", to_remove.len());
         to_remove.into_iter().for_each(|socket_addr| {
-            devices.map.remove(&socket_addr);
+            devices.devices.remove(&socket_addr);
             ()
         });
         debug!("Removed all inactive devices");

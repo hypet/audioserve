@@ -9,7 +9,7 @@ use error::{bail, Context, Error};
 use futures::prelude::*;
 use hyper::{service::make_service_fn, Server as HttpServer};
 use ring::rand::{SecureRandom, SystemRandom};
-use services::Devices;
+use services::State;
 use services::{
     auth::SharedSecretAuthenticator, search::Search, ServiceFactory, 
 };
@@ -121,8 +121,8 @@ fn create_collections() -> anyhow::Result<Arc<Collections>> {
     ))
 }
 
-fn create_devices() -> anyhow::Result<Arc<Devices>> {
-    Ok(Arc::new(Devices::new()))
+fn create_devices() -> anyhow::Result<Arc<State>> {
+    Ok(Arc::new(State::new()))
 }
 
 #[cfg(feature = "shared-positions")]
@@ -140,7 +140,7 @@ fn restore_positions<P: AsRef<Path>>(backup_file: collection::BackupFile<P>) -> 
 fn create_server(
     server_secret: Vec<u8>,
     collections: Arc<Collections>,
-    devices: Arc<Devices>,
+    devices: Arc<State>,
 ) -> Pin<Box<dyn Future<Output = Result<(), Error>> + Send>> {
     let cfg = get_config();
     let addr = cfg.listen;
@@ -168,7 +168,7 @@ fn create_server(
 fn start_server(
     server_secret: Vec<u8>,
     collections: Arc<Collections>,
-    devices: Arc<Devices>,
+    devices: Arc<State>,
 ) -> (tokio::runtime::Runtime, oneshot::Receiver<()>) {
     let cfg = get_config();
 

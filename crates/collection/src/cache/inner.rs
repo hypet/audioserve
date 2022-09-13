@@ -2,9 +2,10 @@ use std::{
     collections::HashMap,
     ops::Deref,
     path::{Path, PathBuf},
-    time::SystemTime,
+    time::SystemTime, sync::{atomic::AtomicUsize, Arc},
 };
 
+use bimap::BiMap;
 use crossbeam_channel::Sender;
 use notify::DebouncedEvent;
 use serde_json::Value;
@@ -40,6 +41,8 @@ pub(crate) struct CacheInner {
     lister: FolderLister,
     base_dir: PathBuf,
     update_sender: Sender<Option<UpdateAction>>,
+    map: Arc<BiMap<usize, Vec<u8>>>,
+    file_counter: Box<usize>,
 }
 
 impl CacheInner {
@@ -49,9 +52,11 @@ impl CacheInner {
         lister: FolderLister,
         base_dir: PathBuf,
         update_sender: Sender<Option<UpdateAction>>,
+        map: Arc<BiMap<usize, Vec<u8>>>,
     ) -> Result<Self> {
         let pos_latest = db.open_tree("pos_latest")?;
         let pos_folder = db.open_tree("pos_folder")?;
+        let file_counter = Box::from(0);
         Ok(CacheInner {
             db,
             pos_latest,
@@ -59,6 +64,8 @@ impl CacheInner {
             lister,
             base_dir,
             update_sender,
+            map,
+            file_counter,
         })
     }
 }
@@ -159,7 +166,14 @@ impl CacheInner {
         let dir = dir.as_ref().to_str().ok_or(Error::InvalidCollectionPath)?;
         bincode::serialize(&af)
             .map_err(Error::from)
-            .and_then(|data| self.db.insert(dir, data).map_err(Error::from))
+            .and_then(|data| {
+                let mut file_counter = *self.file_counter;
+                file_counter = file_counter + 1;
+                let mut map = self.map.as_ref();
+                &map.insert(1, data.clone());
+                // self.map.insert(file_counter, data);
+                self.db.insert(dir, data).map_err(Error::from)
+            })
             .map(|_| debug!("Cache updated for {:?}", dir))
     }
 

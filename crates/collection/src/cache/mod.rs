@@ -13,6 +13,7 @@ use crate::{
     util::get_modified,
     AudioFolderShort, FoldersOrdering,
 };
+use bimap::BiMap;
 use crossbeam_channel::{unbounded as channel, Receiver, Sender};
 use notify::{watcher, DebouncedEvent, Watcher};
 use std::{
@@ -88,6 +89,7 @@ impl CollectionCache {
             .cache_capacity(100 * 1024 * 1024)
             .open()?;
         let (update_sender, update_receiver) = channel::<Option<UpdateAction>>();
+        let map = Arc::new(BiMap::new());
 
         Ok(CollectionCache {
             inner: Arc::new(CacheInner::new(
@@ -95,6 +97,7 @@ impl CollectionCache {
                 FolderLister::new_with_options(opt.into()),
                 root_path,
                 update_sender.clone(),
+                map,
             )?),
             thread_loop: None,
             watcher_sender: Arc::new(Mutex::new(None)),
