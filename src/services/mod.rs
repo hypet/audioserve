@@ -4,7 +4,7 @@ use self::subs::{
     collections_list, get_folder, recent, search, send_file, send_file_simple, ResponseFuture,
 };
 use crate::config::get_config;
-use crate::util::ResponseBuilderExt;
+use crate::util::{ResponseBuilderExt, split_path};
 use crate::{error, util::header2header, Error};
 use bytes::{Bytes, BytesMut};
 use collection::{Collections, FoldersOrdering};
@@ -99,8 +99,8 @@ pub struct State {
     shuffle_mode: Mutex<ShuffleMode>,
     cur_coll: AtomicUsize,
     cur_dir: Mutex<String>,
-    cur_dir_shuffle_tracks: Mutex<Vec<usize>>,
-    cur_dir_shuffle_cursor: AtomicUsize,
+    shuffle_tracks: Mutex<Vec<usize>>,
+    shuffle_cursor: AtomicUsize,
 }
 
 impl State {
@@ -110,13 +110,13 @@ impl State {
             shuffle_mode: Mutex::new(ShuffleMode::Off),
             cur_coll: AtomicUsize::new(0),
             cur_dir: Mutex::new("/".to_string()),
-            cur_dir_shuffle_tracks: Mutex::new(vec![]),
-            cur_dir_shuffle_cursor: AtomicUsize::new(0),
+            shuffle_tracks: Mutex::new(vec![]),
+            shuffle_cursor: AtomicUsize::new(0),
         }
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
 enum ShuffleMode {
     Off,
     CurrentDir,
@@ -124,7 +124,7 @@ enum ShuffleMode {
     Global,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 enum MsgIn {
     RegisterDevice { name: String },
     MakeDeviceActive { device_id: String },
@@ -931,8 +931,8 @@ pub fn handle_request(
 }
 
 fn process_message(msg: String, collections: Arc<Collections>, state: Arc<State>, addr: SocketAddr) {
-    debug!("Got message {:?} from {}", msg, addr);
     let message: Result<MsgIn, Error> = msg.parse();
+    trace!("Got message {:?} from {}", msg, addr);
 
     let devices = state.clone();
 
@@ -967,10 +967,12 @@ fn process_message(msg: String, collections: Arc<Collections>, state: Arc<State>
                 send_to_all_devices(play_track, devices.clone())
             }
             MsgIn::NextTrack { collection, dir } => {
+                debug!("NextTrack: coll: {}, dir: {}", collection, dir);
                 let shuffle_mode = devices.shuffle_mode.lock().unwrap().to_owned();
                 process_next_track(collection, dir, shuffle_mode, collections, devices);
             },
             MsgIn::PrevTrack { collection, dir } => {
+                debug!("PrevTrack: coll: {}, dir: {}", collection, dir);
                 let shuffle_mode = devices.shuffle_mode.lock().unwrap().to_owned();
                 process_prev_track(collection, dir, shuffle_mode, collections, devices);
             },
@@ -983,6 +985,7 @@ fn process_message(msg: String, collections: Arc<Collections>, state: Arc<State>
                 send_to_all_devices_excluding(resume, devices.clone(), Some(addr))
             },
             MsgIn::SwitchShuffle { mode } => {
+                debug!("SwitchShuffle: mode: {:?}", mode);
                 let mut mutex = devices.shuffle_mode.lock().unwrap();
                 *mutex = mode.clone();
                 let switch_shuffle = MsgOut::SwitchShuffleEvent { mode: mode };
@@ -1013,13 +1016,13 @@ fn process_prev_track(collection: usize, dir: String, shuffle_mode: ShuffleMode,
             debug!("Shuffle is off");
         },
         ShuffleMode::CurrentDir => {
-            let cur_dir_shuffle_tracks = devices.cur_dir_shuffle_tracks.lock().unwrap();
-            if cur_dir_shuffle_tracks.is_empty() || devices.cur_dir_shuffle_cursor.load(Ordering::SeqCst) == 0 {
+            let cur_dir_shuffle_tracks = devices.shuffle_tracks.lock().unwrap();
+            if cur_dir_shuffle_tracks.is_empty() || devices.shuffle_cursor.load(Ordering::SeqCst) == 0 {
                 debug!("No previously played tracks");
             } else {
-                let cursor = devices.cur_dir_shuffle_cursor.load(Ordering::SeqCst);
+                let cursor = devices.shuffle_cursor.load(Ordering::SeqCst);
                 let prev_track = cur_dir_shuffle_tracks[cursor];
-                devices.cur_dir_shuffle_cursor.compare_exchange(cursor, cursor - 1, Ordering::SeqCst, Ordering::SeqCst);
+                devices.shuffle_cursor.compare_exchange(cursor, cursor - 1, Ordering::SeqCst, Ordering::SeqCst);
                 let play_track = MsgOut::PlayTrackEvent { collection: collection, dir: dir, track_position: prev_track as u32};
                 send_to_all_devices(play_track, devices.clone())
             }
@@ -1039,7 +1042,7 @@ fn process_next_track(collection: usize, dir: String, shuffle_mode: ShuffleMode,
             debug!("Shuffle is off");
         },
         ShuffleMode::CurrentDir => {
-            let mut cur_dir_shuffle_tracks = devices.cur_dir_shuffle_tracks.lock().unwrap();
+            let mut cur_dir_shuffle_tracks = devices.shuffle_tracks.lock().unwrap();
             let cur_coll = devices.cur_coll.load(Ordering::SeqCst);
             if cur_coll != collection {
                 debug!("coll differs. Was: {}, now: {}", cur_coll, collection);
@@ -1051,10 +1054,10 @@ fn process_next_track(collection: usize, dir: String, shuffle_mode: ShuffleMode,
                 *cur_dir = dir.clone();
             }
             let track_count = collections.count_files_in_dir(collection, PathBuf::from(dir.clone())).unwrap();
-            if devices.cur_dir_shuffle_cursor.load(Ordering::SeqCst) >= track_count {
+            if devices.shuffle_cursor.load(Ordering::SeqCst) >= track_count {
                 debug!("reached end of tracks, clearing played tracks");
                 cur_dir_shuffle_tracks.clear();
-                devices.cur_dir_shuffle_cursor.store(0, Ordering::SeqCst);
+                devices.shuffle_cursor.store(0, Ordering::SeqCst);
             }
 
             if cur_dir_shuffle_tracks.is_empty() {
@@ -1063,18 +1066,59 @@ fn process_next_track(collection: usize, dir: String, shuffle_mode: ShuffleMode,
                 shuffle_tracks.shuffle(&mut rand::thread_rng());
                 debug!("shuffle_tracks: {:?}", shuffle_tracks);
                 cur_dir_shuffle_tracks.extend(shuffle_tracks);
-                devices.cur_dir_shuffle_cursor.store(0, Ordering::SeqCst);
+                devices.shuffle_cursor.store(0, Ordering::SeqCst);
             }
-            let cursor = devices.cur_dir_shuffle_cursor.load(Ordering::SeqCst);
+            let cursor = devices.shuffle_cursor.load(Ordering::SeqCst);
             let next_track = cur_dir_shuffle_tracks[cursor];
             debug!("cursor: {}, next_track: {}", cursor, next_track);
-            let res = devices.cur_dir_shuffle_cursor.compare_exchange(cursor, cursor + 1, Ordering::SeqCst, Ordering::SeqCst);
+            let res = devices.shuffle_cursor.compare_exchange(cursor, cursor + 1, Ordering::SeqCst, Ordering::SeqCst);
             let play_track = MsgOut::PlayTrackEvent { collection: collection, dir: dir, track_position: next_track as u32};
             send_to_all_devices(play_track, devices.clone())
         },
         ShuffleMode::CollectionWide => {
             debug!("CollectionWide");
-            collections.list_dir(collection, dir_path, ordering, group)
+            let mut coll_shuffle_tracks = devices.shuffle_tracks.lock().unwrap();
+
+            let track_count = collections.track_count(collection).unwrap();
+            info!("Track count: {}", track_count);
+            if devices.shuffle_cursor.load(Ordering::SeqCst) >= track_count {
+                debug!("reached end of tracks, clearing played tracks");
+                coll_shuffle_tracks.clear();
+                devices.shuffle_cursor.store(0, Ordering::SeqCst);
+            }
+
+            if coll_shuffle_tracks.is_empty() {
+                debug!("shuffle tracks is empty");
+                let mut shuffle_tracks: Vec<usize> = (0..track_count).collect();
+                shuffle_tracks.shuffle(&mut rand::thread_rng());
+                debug!("shuffle_tracks: {:?}", shuffle_tracks);
+                coll_shuffle_tracks.extend(shuffle_tracks);
+                devices.shuffle_cursor.store(0, Ordering::SeqCst);
+            }
+
+            let cursor = devices.shuffle_cursor.load(Ordering::SeqCst);
+            let next_track = coll_shuffle_tracks[cursor];
+            debug!("cursor: {}, next_track: {}", cursor, next_track);
+            let res = devices.shuffle_cursor.compare_exchange(cursor, cursor + 1, Ordering::SeqCst, Ordering::SeqCst);
+
+            const MAX_RETRIES: usize = 100;
+            let mut path: Option<String> = None;
+            let mut retries: usize = 0;
+            while path == None || retries < MAX_RETRIES {
+                path = collections.path_by_index(collection, next_track);
+                retries += 1;
+            }
+
+            match path {
+                Some(p) => {
+                    let (dir, _file) = split_path(&p);
+                    let play_track = MsgOut::PlayTrackEvent { collection: collection, dir: dir.into(), track_position: next_track as u32};
+                    send_to_all_devices(play_track, devices.clone())
+                },
+                None => {
+                    error!("Could not obtain next random track")
+                },
+            }
         },
         ShuffleMode::Global => {
             debug!("Global");

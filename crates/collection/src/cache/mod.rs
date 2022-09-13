@@ -89,7 +89,7 @@ impl CollectionCache {
             .cache_capacity(100 * 1024 * 1024)
             .open()?;
         let (update_sender, update_receiver) = channel::<Option<UpdateAction>>();
-        let map = Arc::new(BiMap::new());
+        let map = Arc::new(Mutex::new(BiMap::new()));
 
         Ok(CollectionCache {
             inner: Arc::new(CacheInner::new(
@@ -406,6 +406,18 @@ impl CollectionTrait for CollectionCache {
     where
         P: AsRef<Path> {
         self.inner.count_files(dir_path)
+    }
+
+    // fn path_by_index(&self, idx: usize) -> Option<String> {
+    //     self.inner.(idx)
+    // }
+
+    fn path_by_index(&self, idx: usize) -> Option<String> {
+        self.inner.path_by_index(idx)
+    }
+
+    fn track_count(&self) -> usize {
+        self.inner.track_count()
     }
 }
 

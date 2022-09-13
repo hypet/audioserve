@@ -76,6 +76,16 @@ impl CollectionTrait for CollectionDirect {
         debug!("no_cache count_files_in_dir {:?}: {}", dir_path.as_ref().display(), dir.files.len());
         Ok(dir.files.len())
     }
+
+    fn path_by_index(&self, idx: usize) -> Option<String> {
+        error!("no_cache path_by_index: {}", idx);
+        todo!()
+    }
+
+    fn track_count(&self) -> usize {
+        error!("no_cache track_count");
+        todo!()
+    }
 }
 
 impl PositionsTrait for CollectionDirect {

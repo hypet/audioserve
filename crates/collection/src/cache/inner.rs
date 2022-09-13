@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     ops::Deref,
     path::{Path, PathBuf},
-    time::SystemTime, sync::{atomic::AtomicUsize, Arc},
+    time::SystemTime, sync::{Arc, Mutex},
 };
 
 use bimap::BiMap;
@@ -41,7 +41,7 @@ pub(crate) struct CacheInner {
     lister: FolderLister,
     base_dir: PathBuf,
     update_sender: Sender<Option<UpdateAction>>,
-    map: Arc<BiMap<usize, Vec<u8>>>,
+    shuffle_idx_map: Arc<Mutex<BiMap<usize, Vec<u8>>>>,
     file_counter: Box<usize>,
 }
 
@@ -52,7 +52,7 @@ impl CacheInner {
         lister: FolderLister,
         base_dir: PathBuf,
         update_sender: Sender<Option<UpdateAction>>,
-        map: Arc<BiMap<usize, Vec<u8>>>,
+        shuffle_idx_map: Arc<Mutex<BiMap<usize, Vec<u8>>>>,
     ) -> Result<Self> {
         let pos_latest = db.open_tree("pos_latest")?;
         let pos_folder = db.open_tree("pos_folder")?;
@@ -64,7 +64,7 @@ impl CacheInner {
             lister,
             base_dir,
             update_sender,
-            map,
+            shuffle_idx_map: shuffle_idx_map,
             file_counter,
         })
     }
@@ -112,6 +112,18 @@ impl CacheInner {
                         .ok();
                 }
             }
+        }
+    }
+
+    pub(crate) fn track_count(&self) -> usize {
+        self.shuffle_idx_map.lock().unwrap().len()
+    }
+
+    pub(crate) fn path_by_index(&self, idx: usize) -> Option<String> {
+        let map = self.shuffle_idx_map.lock().unwrap();
+        match map.get_by_left(&idx) {
+            Some(path) => Some(String::from_utf8(path.clone()).unwrap()),
+            None => None,
         }
     }
 }
@@ -169,9 +181,7 @@ impl CacheInner {
             .and_then(|data| {
                 let mut file_counter = *self.file_counter;
                 file_counter = file_counter + 1;
-                let mut map = self.map.as_ref();
-                &map.insert(1, data.clone());
-                // self.map.insert(file_counter, data);
+                self.shuffle_idx_map.lock().unwrap().insert(file_counter, data.clone());
                 self.db.insert(dir, data).map_err(Error::from)
             })
             .map(|_| debug!("Cache updated for {:?}", dir))

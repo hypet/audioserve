@@ -78,3 +78,11 @@ pub fn parse_cron<S: AsRef<str>>(exp: S) -> crate::error::Result<cron::Schedule>
     let exp = format!("0 {} *", exp.as_ref());
     exp.parse().map_err(crate::Error::from)
 }
+
+pub fn split_path<S: AsRef<str>>(p: &S) -> (&str, &str) {
+    let s = p.as_ref();
+    match s.rsplit_once('/') {
+        Some((path, file)) => (path, file),
+        None => ("", s),
+    }
+}

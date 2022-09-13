@@ -128,6 +128,20 @@ impl Collections {
             .count_files_in_dir(dir_path)
     }
 
+    pub fn track_count(&self, collection: usize) -> Result<usize> {
+        match self.get_cache(collection) {
+            Ok(cache) => Ok(cache.track_count()),
+            Err(_) => Ok(0),
+        }
+    }
+
+    pub fn path_by_index(&self, collection: usize, idx: usize) -> Option<String> {
+        match self.get_cache(collection) {
+            Ok(cache) => cache.path_by_index(idx),
+            Err(_) => None,
+        }
+    }
+
     pub fn flush(&self) -> Result<()> {
         let mut result = vec![];
         for c in &self.caches {

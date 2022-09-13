@@ -266,6 +266,10 @@ pub(crate) trait CollectionTrait {
     where
         P: AsRef<Path>;
 
+    fn track_count(&self) -> usize;
+
+    fn path_by_index(&self, idx: usize) -> Option<String>;
+
     fn flush(&self) -> Result<()>;
 
     fn search<S: AsRef<str>>(&self, q: S, group: Option<String>) -> Vec<AudioFolderShort>;
