@@ -13,8 +13,9 @@ use crate::{
     util::get_modified,
     AudioFolderShort, FoldersOrdering,
 };
-use bimap::BiMap;
+// use bimap::BiMap;
 use crossbeam_channel::{unbounded as channel, Receiver, Sender};
+use dashmap::DashMap;
 use notify::{watcher, DebouncedEvent, Watcher};
 use std::{
     collections::BinaryHeap,
@@ -89,7 +90,7 @@ impl CollectionCache {
             .cache_capacity(100 * 1024 * 1024)
             .open()?;
         let (update_sender, update_receiver) = channel::<Option<UpdateAction>>();
-        let map = Arc::new(Mutex::new(BiMap::new()));
+        let map = DashMap::new();
 
         Ok(CollectionCache {
             inner: Arc::new(CacheInner::new(

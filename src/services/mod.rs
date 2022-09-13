@@ -30,7 +30,6 @@ use hyper::{
 };
 use leaky_cauldron::Leaky;
 use percent_encoding::percent_decode;
-use rand::Rng;
 use rand::seq::SliceRandom;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -932,76 +931,75 @@ pub fn handle_request(
 
 fn process_message(msg: String, collections: Arc<Collections>, state: Arc<State>, addr: SocketAddr) {
     let message: Result<MsgIn, Error> = msg.parse();
-    trace!("Got message {:?} from {}", msg, addr);
-
-    let devices = state.clone();
+    let state = state.clone();
 
     match message {
         Ok(message) => match message {
             MsgIn::RegisterDevice { name } => {
-                let mut device = devices.devices.get_mut(&addr).unwrap();
+                let device_count = state.devices.len();
+                let mut device = state.devices.get_mut(&addr).unwrap();
                 device.name = Some(name);
                 // Make first connected device active
-                if devices.devices.len() == 1 {
+                if device_count == 1 {
                     device.active = true;
                 }
                 debug!("RegisterDevice: {:?}", device.id);
                 let reg_device_event = MsgOut::RegisterDeviceEvent {
                     device_id: device.id.clone()
                 };
-                send_to_device(reg_device_event, devices.clone(), addr);
-                send_updated_device_list(devices.clone());
+                send_to_device(reg_device_event, state.clone(), addr);
+                send_updated_device_list(state.clone());
             }
             MsgIn::MakeDeviceActive { device_id } => {
-                let device_key = find_device_key_by_id(devices.clone(), &device_id);
-                let mut device = devices.devices.get_mut(&device_key).unwrap();
+                let device_key = find_device_key_by_id(state.clone(), &device_id);
+                let mut device = state.devices.get_mut(&device_key).unwrap();
                 device.active = true;
                 let make_device_active = MsgOut::MakeDeviceActiveEvent {
                     device_id: device_id,
                 };
-                send_to_all_devices(make_device_active, devices.clone())
+                send_to_all_devices(make_device_active, state.clone())
             }
             MsgIn::PlayTrack { collection, dir, track_position } => {
                 debug!("PlayTrack: {} {} {}", collection, dir, track_position);
                 let play_track = MsgOut::PlayTrackEvent { collection: collection, dir: dir, track_position: track_position };
-                send_to_all_devices(play_track, devices.clone())
+                send_to_all_devices(play_track, state.clone())
             }
             MsgIn::NextTrack { collection, dir } => {
                 debug!("NextTrack: coll: {}, dir: {}", collection, dir);
-                let shuffle_mode = devices.shuffle_mode.lock().unwrap().to_owned();
-                process_next_track(collection, dir, shuffle_mode, collections, devices);
+                let shuffle_mode = state.shuffle_mode.lock().unwrap().to_owned();
+                process_next_track(collection, dir, shuffle_mode, collections, state);
             },
             MsgIn::PrevTrack { collection, dir } => {
                 debug!("PrevTrack: coll: {}, dir: {}", collection, dir);
-                let shuffle_mode = devices.shuffle_mode.lock().unwrap().to_owned();
-                process_prev_track(collection, dir, shuffle_mode, collections, devices);
+                let shuffle_mode = state.shuffle_mode.lock().unwrap().to_owned();
+                process_prev_track(collection, dir, shuffle_mode, collections, state);
             },
             MsgIn::Pause {} => {
                 let pause = MsgOut::PauseEvent { };
-                send_to_all_devices_excluding(pause, devices.clone(), Some(addr))
+                send_to_all_devices_excluding(pause, state.clone(), Some(addr))
             },
             MsgIn::Resume {} => {
                 let resume = MsgOut::ResumeEvent { };
-                send_to_all_devices_excluding(resume, devices.clone(), Some(addr))
+                send_to_all_devices_excluding(resume, state.clone(), Some(addr))
             },
             MsgIn::SwitchShuffle { mode } => {
                 debug!("SwitchShuffle: mode: {:?}", mode);
-                let mut mutex = devices.shuffle_mode.lock().unwrap();
+                let mut mutex = state.shuffle_mode.lock().unwrap();
                 *mutex = mode.clone();
                 let switch_shuffle = MsgOut::SwitchShuffleEvent { mode: mode };
-                send_to_all_devices_excluding(switch_shuffle, devices.clone(), Some(addr))
+                send_to_all_devices_excluding(switch_shuffle, state.clone(), Some(addr))
             },
             MsgIn::CurrentPos { collection, path, track_position, time } => {
                 let current_pos = MsgOut::CurrentPosEvent { collection: collection, path: path, track_position: track_position, time: time };
-                send_to_all_devices_excluding(current_pos, devices.clone(), Some(addr))
+                send_to_all_devices_excluding(current_pos, state.clone(), Some(addr))
             },
             MsgIn::RewindTo { time } => {
                 let rewind_to = MsgOut::RewindToEvent { time: time };
-                send_to_all_devices_excluding(rewind_to, devices.clone(), Some(addr))
+                send_to_all_devices_excluding(rewind_to, state.clone(), Some(addr))
             },
             MsgIn::VolumeChange { value } => {
                 let volume_change = MsgOut::VolumeChangeEvent { value: value };
-                send_to_all_devices_excluding(volume_change, devices.clone(), Some(addr))
+                send_to_all_devices_excluding(volume_change, state.clone(), Some(addr))
             },
         },
         Err(e) => {
