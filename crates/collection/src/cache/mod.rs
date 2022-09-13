@@ -13,7 +13,6 @@ use crate::{
     util::get_modified,
     AudioFolderShort, FoldersOrdering,
 };
-// use bimap::BiMap;
 use crossbeam_channel::{unbounded as channel, Receiver, Sender};
 use dashmap::DashMap;
 use notify::{watcher, DebouncedEvent, Watcher};
@@ -409,16 +408,12 @@ impl CollectionTrait for CollectionCache {
         self.inner.count_files(dir_path)
     }
 
-    // fn path_by_index(&self, idx: usize) -> Option<String> {
-    //     self.inner.(idx)
-    // }
-
     fn path_by_index(&self, idx: usize) -> Option<String> {
         self.inner.path_by_index(idx)
     }
 
-    fn track_count(&self) -> usize {
-        self.inner.track_count()
+    fn dir_count(&self) -> usize {
+        self.inner.dir_count()
     }
 }
 

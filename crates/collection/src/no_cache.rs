@@ -82,8 +82,8 @@ impl CollectionTrait for CollectionDirect {
         todo!()
     }
 
-    fn track_count(&self) -> usize {
-        error!("no_cache track_count");
+    fn dir_count(&self) -> usize {
+        error!("no_cache dir_count");
         todo!()
     }
 }

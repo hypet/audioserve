@@ -128,9 +128,9 @@ impl Collections {
             .count_files_in_dir(dir_path)
     }
 
-    pub fn track_count(&self, collection: usize) -> Result<usize> {
+    pub fn dir_count(&self, collection: usize) -> Result<usize> {
         match self.get_cache(collection) {
-            Ok(cache) => Ok(cache.track_count()),
+            Ok(cache) => Ok(cache.dir_count()),
             Err(_) => Ok(0),
         }
     }

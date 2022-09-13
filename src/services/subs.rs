@@ -2,16 +2,14 @@
 use super::{
     resp,
     search::{Search, SearchTrait},
-    transcode::{guess_format, AudioFilePath},
     types::*,
-    // Counter,
 };
 use crate::{
     config::get_config,
     error::{Error, Result},
     util::{checked_dec, into_range_bounds, to_satisfiable_range, ResponseBuilderExt},
 };
-use collection::{guess_mime_type, parse_chapter_path, FoldersOrdering, TimeSpan};
+use collection::{guess_mime_type, parse_chapter_path, FoldersOrdering};
 use futures::prelude::*;
 use futures::{future, ready, Stream};
 use headers::{AcceptRanges, CacheControl, ContentLength, ContentRange, ContentType, LastModified};
@@ -22,7 +20,7 @@ use std::{
     io::{self, SeekFrom},
     path::{Path, PathBuf},
     pin::Pin,
-    sync::{atomic::Ordering, Arc},
+    sync::Arc,
     task::{Context, Poll}, env,
 };
 use tokio::{
@@ -155,7 +153,7 @@ fn serve_file_from_fs(
 ) -> ResponseFuture {
     let base_dir = env::current_dir();
     let filename: PathBuf = base_dir.unwrap().join(full_path).into();
-    debug!("Requested static file: {:?}", filename);
+    trace!("Requested static file: {:?}", filename);
     let fut = async move {
         match tokio::fs::File::open(&filename).await {
             Ok(file) => {
@@ -190,7 +188,7 @@ pub fn send_file<P: AsRef<Path>>(
 ) -> ResponseFuture {
     let (real_path, span) = parse_chapter_path(file_path.as_ref());
     let full_path = base_path.join(real_path);
-    debug!("Sending file directly from fs");
+    trace!("Sending file directly from fs");
     serve_file_from_fs(&full_path, range, None)
 }
 

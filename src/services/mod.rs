@@ -4,7 +4,7 @@ use self::subs::{
     collections_list, get_folder, recent, search, send_file, send_file_simple, ResponseFuture,
 };
 use crate::config::get_config;
-use crate::util::{ResponseBuilderExt, split_path};
+use crate::util::{ResponseBuilderExt};
 use crate::{error, util::header2header, Error};
 use bytes::{Bytes, BytesMut};
 use collection::{Collections, FoldersOrdering};
@@ -30,15 +30,14 @@ use hyper::{
 };
 use leaky_cauldron::Leaky;
 use percent_encoding::percent_decode;
+use rand::Rng;
 use rand::seq::SliceRandom;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
 use tokio_tungstenite::tungstenite::protocol::Role;
 use tokio_tungstenite::tungstenite::Message;
-// use tracing_mutex::stdsync::TracingMutex;
 use uuid::Uuid;
-// use std::fmt::Result;
 use std::iter::FromIterator;
 use std::str::FromStr;
 use std::sync::Mutex;
@@ -835,7 +834,7 @@ async fn handle_connection(
     let broadcast_incoming = incoming.try_for_each(|msg| {
         match msg {
             Message::Text(string) => {
-                debug!("Received a message from {}: {}", addr, string);
+                trace!("Received a message from {}: {}", addr, string);
                 process_message(string, collections.clone(), state.clone(), addr);
             }
             Message::Binary(_) => {
@@ -1069,53 +1068,48 @@ fn process_next_track(collection: usize, dir: String, shuffle_mode: ShuffleMode,
             let cursor = devices.shuffle_cursor.load(Ordering::SeqCst);
             let next_track = cur_dir_shuffle_tracks[cursor];
             debug!("cursor: {}, next_track: {}", cursor, next_track);
-            let res = devices.shuffle_cursor.compare_exchange(cursor, cursor + 1, Ordering::SeqCst, Ordering::SeqCst);
+            let _res = devices.shuffle_cursor.compare_exchange(cursor, cursor + 1, Ordering::SeqCst, Ordering::SeqCst);
             let play_track = MsgOut::PlayTrackEvent { collection: collection, dir: dir, track_position: next_track as u32};
             send_to_all_devices(play_track, devices.clone())
         },
         ShuffleMode::CollectionWide => {
-            debug!("CollectionWide");
-            let mut coll_shuffle_tracks = devices.shuffle_tracks.lock().unwrap();
-
-            let track_count = collections.track_count(collection).unwrap();
-            info!("Track count: {}", track_count);
-            if devices.shuffle_cursor.load(Ordering::SeqCst) >= track_count {
-                debug!("reached end of tracks, clearing played tracks");
-                coll_shuffle_tracks.clear();
-                devices.shuffle_cursor.store(0, Ordering::SeqCst);
+            let dir_count = collections.dir_count(collection).unwrap();
+            if dir_count == 0 {
+                error!("No dirs in collection {}!", collection);
+                return;
+            } else {
+                info!("Dir count: {}", dir_count);
             }
 
-            if coll_shuffle_tracks.is_empty() {
-                debug!("shuffle tracks is empty");
-                let mut shuffle_tracks: Vec<usize> = (0..track_count).collect();
-                shuffle_tracks.shuffle(&mut rand::thread_rng());
-                debug!("shuffle_tracks: {:?}", shuffle_tracks);
-                coll_shuffle_tracks.extend(shuffle_tracks);
-                devices.shuffle_cursor.store(0, Ordering::SeqCst);
-            }
-
-            let cursor = devices.shuffle_cursor.load(Ordering::SeqCst);
-            let next_track = coll_shuffle_tracks[cursor];
-            debug!("cursor: {}, next_track: {}", cursor, next_track);
-            let res = devices.shuffle_cursor.compare_exchange(cursor, cursor + 1, Ordering::SeqCst, Ordering::SeqCst);
-
+            let mut rng = rand::thread_rng();
+            let mut dir: Option<String> = None;
             const MAX_RETRIES: usize = 100;
-            let mut path: Option<String> = None;
             let mut retries: usize = 0;
-            while path == None || retries < MAX_RETRIES {
-                path = collections.path_by_index(collection, next_track);
+            loop {
+                let rnd: usize = rng.gen_range(1..dir_count);
+                dir = collections.path_by_index(collection, rnd);
+                if dir == None || retries >= MAX_RETRIES {
+                    error!("Could not obtain next random track after {} retries", retries);
+                    break;
+                }
                 retries += 1;
-            }
 
-            match path {
-                Some(p) => {
-                    let (dir, _file) = split_path(&p);
-                    let play_track = MsgOut::PlayTrackEvent { collection: collection, dir: dir.into(), track_position: next_track as u32};
-                    send_to_all_devices(play_track, devices.clone())
-                },
-                None => {
-                    error!("Could not obtain next random track")
-                },
+                match dir {
+                    Some(p) => {
+                        let track_count: usize = collections.count_files_in_dir(collection, PathBuf::from(p.clone())).unwrap();
+                        if track_count == 0 {
+                            debug!("Found empty dir: {}", p);
+                            continue;
+                        }
+                        let next_track = rng.gen_range(0..track_count);
+                        let play_track = MsgOut::PlayTrackEvent { collection: collection, dir: p, track_position: next_track as u32};
+                        send_to_all_devices(play_track, devices.clone());
+                        break;
+                    },
+                    None => {
+                        error!("Could not obtain next random track")
+                    },
+                }
             }
         },
         ShuffleMode::Global => {
@@ -1157,7 +1151,7 @@ fn send_updated_device_list(devices: Arc<State>) {
 fn send_to_device(msg: MsgOut, devices: Arc<State>, addr: SocketAddr) {
     tokio::spawn(async move {
         let m = Msg(msg);
-        debug!("Sending msg to {}: {:?}", addr, m);
+        trace!("Sending msg to {}: {:?}", addr, m);
         let device = devices.devices.get(&addr).unwrap();
         match device.ws.unbounded_send(Message::Text(serde_json::to_string(&m).unwrap())) {
             Ok(_) => {
@@ -1177,7 +1171,7 @@ fn send_to_all_devices(msg: MsgOut, devices: Arc<State>) {
 fn send_to_all_devices_excluding(msg: MsgOut, devices: Arc<State>, device_to_exclude: Option<SocketAddr>) {
     tokio::spawn(async move {
         let m = Msg(msg);
-        debug!("Sending msg to all but {:?}: {:?}", device_to_exclude, m);
+        trace!("Sending msg to all but {:?}: {:?}", device_to_exclude, m);
         let inactive_devices: Vec<SocketAddr> = devices.devices.iter()
             .filter(|ref_multi| {
                 device_to_exclude.is_none() || (device_to_exclude.is_some() && *ref_multi.key() != device_to_exclude.unwrap())

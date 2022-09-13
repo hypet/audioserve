@@ -266,7 +266,7 @@ pub(crate) trait CollectionTrait {
     where
         P: AsRef<Path>;
 
-    fn track_count(&self) -> usize;
+    fn dir_count(&self) -> usize;
 
     fn path_by_index(&self, idx: usize) -> Option<String>;
 
