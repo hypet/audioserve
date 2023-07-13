@@ -37,9 +37,7 @@ use serde::{Deserialize, Serialize};
 use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
 use tokio_tungstenite::tungstenite::protocol::Role;
 use tokio_tungstenite::tungstenite::Message;
-// use tracing_mutex::stdsync::TracingMutex;
 use uuid::Uuid;
-// use std::fmt::Result;
 use std::iter::FromIterator;
 use std::str::FromStr;
 use std::sync::Mutex;
@@ -989,7 +987,7 @@ fn process_message(msg: String, collections: Arc<Collections>, devices: Arc<Devi
                         }
                         let cursor = devices.cur_dir_shuffle_cursor.load(Ordering::SeqCst);
                         let next_track = cur_dir_shuffle_tracks[cursor];
-                        devices.cur_dir_shuffle_cursor.compare_exchange(cursor, cursor + 1, Ordering::SeqCst, Ordering::SeqCst);
+                        let _ = devices.cur_dir_shuffle_cursor.compare_exchange(cursor, cursor + 1, Ordering::SeqCst, Ordering::SeqCst);
                         let play_track = MsgOut::PlayTrackEvent { collection: collection, dir: dir, track_position: next_track as u32};
                         send_to_all_devices(play_track, devices.clone())
                     },

@@ -1,5 +1,4 @@
-use super::transcode::{TranscodingFormat};
-use crate::config::get_config;
+use super::transcode::TranscodingFormat;
 use collection::{AudioFile, AudioFolderShort};
 use serde::Serialize;
 

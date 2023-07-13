@@ -2,16 +2,14 @@
 use super::{
     resp,
     search::{Search, SearchTrait},
-    transcode::{guess_format, AudioFilePath},
     types::*,
-    // Counter,
 };
 use crate::{
     config::get_config,
     error::{Error, Result},
     util::{checked_dec, into_range_bounds, to_satisfiable_range, ResponseBuilderExt},
 };
-use collection::{guess_mime_type, parse_chapter_path, FoldersOrdering, TimeSpan};
+use collection::{guess_mime_type, parse_chapter_path, FoldersOrdering};
 use futures::prelude::*;
 use futures::{future, ready, Stream};
 use headers::{AcceptRanges, CacheControl, ContentLength, ContentRange, ContentType, LastModified};
@@ -22,7 +20,7 @@ use std::{
     io::{self, SeekFrom},
     path::{Path, PathBuf},
     pin::Pin,
-    sync::{atomic::Ordering, Arc},
+    sync::Arc,
     task::{Context, Poll}, env,
 };
 use tokio::{

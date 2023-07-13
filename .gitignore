@@ -1,6 +1,7 @@
 
 **/target/
 **/*.rs.bk
+Cargo.lock
 .vscode
 *.old
 /client/node_modules
@@ -11,4 +12,3 @@ rls/
 _static_build
 /crates/**/Cargo.lock
 client/dist/bundle.js.LICENSE.txt
-Cargo.lock
