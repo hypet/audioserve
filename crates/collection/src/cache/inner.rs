@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     ops::Deref,
     path::{Path, PathBuf},
-    time::SystemTime,
+    time::SystemTime, sync::{Arc, Mutex},
 };
 
 use crossbeam_channel::Sender;
@@ -24,7 +24,7 @@ use crate::{
     error::{Error, Result},
     position::{PositionItem, PositionRecord, PositionsCollector, MAX_GROUPS},
     util::{get_file_name, get_modified},
-    AudioFolderShort, FoldersOrdering, Position,
+    AudioFolderShort, FoldersOrdering, Position, AudioFile,
 };
 
 use super::{
@@ -40,6 +40,7 @@ pub(crate) struct CacheInner {
     lister: FolderLister,
     base_dir: PathBuf,
     update_sender: Sender<Option<UpdateAction>>,
+    tracks: Arc<Mutex<HashMap<u32, AudioFile>>>,
 }
 
 impl CacheInner {
@@ -49,6 +50,7 @@ impl CacheInner {
         lister: FolderLister,
         base_dir: PathBuf,
         update_sender: Sender<Option<UpdateAction>>,
+        tracks: Arc<Mutex<HashMap<u32, AudioFile>>>,
     ) -> Result<Self> {
         let pos_latest = db.open_tree("pos_latest")?;
         let pos_folder = db.open_tree("pos_folder")?;
@@ -59,6 +61,7 @@ impl CacheInner {
             lister,
             base_dir,
             update_sender,
+            tracks,
         })
     }
 }
@@ -77,6 +80,24 @@ impl CacheInner {
         self.lister
             .list_dir(&self.base_dir, dir_path, ordering)
             .map_err(Error::from)
+    }
+
+    pub(crate) fn list_all(&self) -> Result<AudioFolder> {
+        let map = self.tracks.lock().unwrap();
+        let files: Vec<AudioFile> = map.values().map(|f| f.to_owned()).collect();
+        let af = AudioFolder {
+            is_file: false,
+            is_collapsed: false,
+            modified: Some(TimeStamp::now()),
+            total_time: Some(100),
+            files: files,
+            subfolders: vec![],
+            cover: None,
+            description: None,
+            position: None,
+            tags: None,
+        };
+        Ok(af)
     }
 
     pub(crate) fn count_files<P: AsRef<Path>>(

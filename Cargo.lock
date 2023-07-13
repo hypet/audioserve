@@ -326,6 +326,7 @@ dependencies = [
  "tokio",
  "unicase",
  "unicase_serde",
+ "walkdir",
 ]
 
 [[package]]

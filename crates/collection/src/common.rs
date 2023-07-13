@@ -259,6 +259,10 @@ pub(crate) trait CollectionTrait {
     where
         P: AsRef<Path>;
 
+    fn list_all(
+        &self,
+    ) -> Result<AudioFolder>;
+
     fn count_files_in_dir<P>(
         &self,
         dir_path: P

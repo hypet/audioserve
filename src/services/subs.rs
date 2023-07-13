@@ -211,6 +211,20 @@ pub fn get_folder(
     )
 }
 
+pub fn get_all(
+    collection: usize,
+    collections: Arc<collection::Collections>,
+) -> ResponseFuture {
+    Box::pin(
+        blocking(move || collections.list_all(collection))
+            .map_ok(|res| match res {
+                Ok(folder) => json_response(&folder),
+                Err(_) => resp::not_found(),
+            })
+            .map_err(Error::new),
+    )
+}
+
 #[cfg(feature = "folder-download")]
 pub fn download_folder(
     base_path: &'static Path,

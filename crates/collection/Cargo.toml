@@ -34,6 +34,7 @@ notify = "4.0"
 crossbeam-channel = "0.5"
 enum_dispatch = "0.3"
 lofty = { path = "../../../lofty-rs" }
+walkdir = "2"
 
 tokio = {version="1", optional=true, features=["rt"]}
 rust_icu_ucol = {version="2.0", default-features=false, features=["renaming"], optional=true}

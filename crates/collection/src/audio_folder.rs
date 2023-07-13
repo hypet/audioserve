@@ -1,7 +1,7 @@
 use std::borrow::{self, Cow};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
-use std::io;
+use std::{io, vec};
 use std::path::{Path, PathBuf};
 use std::{fs, mem};
 
@@ -11,6 +11,7 @@ use crate::common::CollectionOptions;
 use crate::util::{get_meta, get_modified, get_real_file_type, guess_mime_type};
 use lazy_static::lazy_static;
 use regex::Regex;
+use walkdir::WalkDir;
 
 pub enum DirType {
     File {
@@ -91,6 +92,57 @@ impl FolderLister {
                 "Not folder or chapterised audio file",
             )),
         }
+    }
+
+    pub fn list_all<P: AsRef<Path>>(
+        &self,
+        base_dir: P,
+    ) -> Result<AudioFolder, io::Error> {
+        let full_path = base_dir.as_ref();
+        let mut counter: u32 = 0;
+        let mut files = vec![];
+
+        for entry in WalkDir::new(full_path) {
+            let entry = entry.unwrap();
+            let entry_path: &Path = entry.path().strip_prefix(base_dir.as_ref()).unwrap();
+            if entry.path().is_file() {
+                let audio_info = get_audio_properties(&entry.path());
+                match audio_info {
+                    Ok(meta) => {
+                        counter += 1;
+                        let tags = meta.get_audio_info(&self.config.tags);
+                        let af = AudioFile {
+                            id: counter,
+                            meta: tags,
+                            path: entry_path.to_path_buf(),
+                            name: format!("{}", entry.file_name().to_str().unwrap()).into(),
+                            section: None,
+                            mime: "audio".to_string(),
+                        };
+        
+                        files.push(af);
+                    },
+                    Err(_) => {
+                        debug!("Skipping file {:?} because error in extraction of audio meta", &entry.path());
+                        continue;
+                    }
+                };
+            }
+        }
+        info!("Files read: {}", &files.len());
+
+        Ok(AudioFolder {
+            is_file: false,
+            is_collapsed: false,
+            modified: None,
+            total_time: None,
+            files,
+            subfolders: vec![],
+            cover: None,
+            description: None,
+            position: None,
+            tags: None,
+        })
     }
 
     pub(crate) fn collapse_cd_enabled(&self) -> bool {
@@ -253,6 +305,7 @@ impl FolderLister {
                                                 )?)
                                             } else {
                                                 files.push(AudioFile {
+                                                    id: 0u32,
                                                     meta,
                                                     path,
                                                     name: f.file_name().to_string_lossy().into(),
@@ -425,6 +478,7 @@ impl FolderLister {
                     }
                 };
                 Ok(AudioFile {
+                    id: 0u32,
                     meta: Some(new_meta),
                     path: path_for_chapter(path, &chap, collapse)?,
                     name: format!("{:03} - {}", chap.number, chap.title).into(),

@@ -1,7 +1,7 @@
 use self::auth::{AuthResult, Authenticator};
 use self::search::Search;
 use self::subs::{
-    collections_list, get_folder, recent, search, send_file, send_file_simple, ResponseFuture,
+    collections_list, get_folder, get_all, recent, search, send_file, send_file_simple, ResponseFuture,
 };
 use crate::config::get_config;
 use crate::util::ResponseBuilderExt;
@@ -640,7 +640,7 @@ impl<C: 'static> FileSendService<C> {
                     #[cfg(feature = "shared-positions")]
                     self::position::position_service(req, collections)
                 } else {
-                    let (path, colllection_index) = match extract_collection_number(path) {
+                    let (path, collection_index) = match extract_collection_number(path) {
                         Ok(r) => r,
                         Err(_) => {
                             error!("Invalid collection number");
@@ -648,7 +648,7 @@ impl<C: 'static> FileSendService<C> {
                         }
                     };
 
-                    let base_dir = &get_config().base_dirs[colllection_index];
+                    let base_dir = &get_config().base_dirs[collection_index];
                     let ord = params
                         .get("ord")
                         .map(|l| FoldersOrdering::from_letter(l))
@@ -665,11 +665,16 @@ impl<C: 'static> FileSendService<C> {
                     } else if path.starts_with("/folder/") {
                         let group = params.get_string("group");
                         get_folder(
-                            colllection_index,
+                            collection_index,
                             get_subpath(path, "/folder/"),
                             collections,
                             ord,
                             group,
+                        )
+                    } else if path.starts_with("/all") {
+                        get_all(
+                            collection_index,
+                            collections,
                         )
                     } else if !get_config().disable_folder_download && path.starts_with("/download")
                     {
@@ -699,14 +704,14 @@ impl<C: 'static> FileSendService<C> {
                     } else if path == "/search" {
                         if let Some(search_string) = params.get_string("q") {
                             let group = params.get_string("group");
-                            search(colllection_index, searcher, search_string, ord, group)
+                            search(collection_index, searcher, search_string, ord, group)
                         } else {
                             error!("q parameter is missing in search");
                             resp::fut(resp::not_found)
                         }
                     } else if path.starts_with("/recent") {
                         let group = params.get_string("group");
-                        recent(colllection_index, searcher, group)
+                        recent(collection_index, searcher, group)
                     } else if path.starts_with("/cover/") {
                         send_file_simple(
                             base_dir,

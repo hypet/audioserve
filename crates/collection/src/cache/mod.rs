@@ -11,12 +11,12 @@ use crate::{
     error::{Error, Result},
     position::{Position, PositionShort, PositionsCollector},
     util::get_modified,
-    AudioFolderShort, FoldersOrdering,
+    AudioFolderShort, FoldersOrdering, AudioFile,
 };
 use crossbeam_channel::{unbounded as channel, Receiver, Sender};
 use notify::{watcher, DebouncedEvent, Watcher};
 use std::{
-    collections::BinaryHeap,
+    collections::{BinaryHeap, HashMap},
     convert::TryInto,
     fs::File,
     io,
@@ -89,12 +89,22 @@ impl CollectionCache {
             .open()?;
         let (update_sender, update_receiver) = channel::<Option<UpdateAction>>();
 
+        let lister = FolderLister::new_with_options(opt.into());
+        let track_map: HashMap<u32, AudioFile> = match lister.list_all(&root_path) {
+            Ok(af) => af.files.iter().map(|t| (t.id, t.to_owned())).collect(),
+            Err(e) => {
+                error!("Failed to build track list at {:?}: {}", &root_path, e);
+                HashMap::new()
+            },
+        };
+        let tracks = Arc::new(Mutex::new(track_map));
         Ok(CollectionCache {
             inner: Arc::new(CacheInner::new(
                 db,
-                FolderLister::new_with_options(opt.into()),
+                lister,
                 root_path,
                 update_sender.clone(),
+                tracks
             )?),
             thread_loop: None,
             watcher_sender: Arc::new(Mutex::new(None)),
@@ -269,6 +279,11 @@ impl CollectionCache {
 }
 
 impl CollectionTrait for CollectionCache {
+    fn list_all(&self) -> Result<AudioFolder> {
+        let af = self.inner.list_all().unwrap();
+        Ok(af)
+    }
+
     fn list_dir<P: AsRef<Path>>(
         &self,
         dir_path: P,

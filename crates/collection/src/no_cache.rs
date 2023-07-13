@@ -44,6 +44,14 @@ impl CollectionTrait for CollectionDirect {
             .map_err(Error::from)
     }
 
+    fn list_all(
+        &self,
+    ) -> Result<AudioFolder> {
+        self.lister
+            .list_all(&self.base_dir)
+            .map_err(Error::from)
+    }
+
     fn flush(&self) -> Result<()> {
         Ok(())
     }

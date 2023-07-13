@@ -369,7 +369,7 @@ class NetworkFirstCache {
 }
 
 const ENVIRONMENT = "PRODUCTION";
-const APP_COMMIT = "58e1e443";
+const APP_COMMIT = "391a0f50";
 /// @ts-ignore
 const isDevelopment = ENVIRONMENT === "DEVELOPMENT";
 

@@ -81,6 +81,7 @@ pub struct FileSection {
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct AudioFile {
+    pub id: u32,
     #[serde(with = "unicase_serde::unicase")]
     pub name: UniCase<String>,
     pub path: PathBuf,
