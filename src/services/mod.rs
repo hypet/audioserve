@@ -31,7 +31,6 @@ use hyper::{
 use leaky_cauldron::Leaky;
 use percent_encoding::percent_decode;
 use rand::Rng;
-use rand::seq::SliceRandom;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
@@ -41,7 +40,6 @@ use uuid::Uuid;
 use std::iter::FromIterator;
 use std::str::FromStr;
 use std::sync::Mutex;
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::{
     borrow::Cow,
@@ -95,8 +93,6 @@ struct ClientDevice {
 pub struct Devices {
     map: DashMap<SocketAddr, Device>,
     shuffle_mode: Mutex<ShuffleMode>,
-    cur_dir_shuffle_tracks: Mutex<Vec<usize>>,
-    cur_dir_shuffle_cursor: AtomicUsize,
 }
 
 impl Devices {
@@ -104,8 +100,6 @@ impl Devices {
         Devices {
             map: DashMap::new(),
             shuffle_mode: Mutex::new(ShuffleMode::Off),
-            cur_dir_shuffle_tracks: Mutex::new(vec![]),
-            cur_dir_shuffle_cursor: AtomicUsize::new(0),
         }
     }
 }
@@ -122,12 +116,12 @@ enum ShuffleMode {
 enum MsgIn {
     RegisterDevice { name: String },
     MakeDeviceActive { device_id: String },
-    PlayTrack { collection: usize, dir: String, track_position: u32 },
-    NextTrack { collection: usize, dir: String },
+    PlayTrack { collection: usize, track_id: u32 },
+    NextTrack { collection: usize, },
     Pause {},
     Resume {},
     SwitchShuffle { mode: ShuffleMode },
-    CurrentPos { collection: usize, path: String, track_position: u32, time: f32 },
+    CurrentPos { collection: usize, track_id: u32, time: f32 },
     RewindTo { time: f32 },
     VolumeChange { value: u8 },
 }
@@ -146,13 +140,13 @@ enum MsgOut {
     RegisterDeviceEvent { device_id: String },
     DevicesOnlineEvent { devices: Vec<ClientDevice> },
     MakeDeviceActiveEvent { device_id: String },
-    PlayTrackEvent { collection: usize, dir: String, track_position: u32 },
+    PlayTrackEvent { collection: usize, track_id: u32 },
     NextTrackEvent { track: String },
     RewindTrackToTime {},
     PauseEvent {},
     ResumeEvent {},
     SwitchShuffleEvent { mode: ShuffleMode },
-    CurrentPosEvent { collection: usize, path: String, track_position: u32, time: f32 },
+    CurrentPosEvent { collection: usize, track_id: u32, time: f32 },
     RewindToEvent { time: f32 },
     VolumeChangeEvent { value: u8 },
 }
@@ -660,6 +654,14 @@ impl<C: 'static> FileSendService<C> {
                             params,
                             user_agent.as_ref().map(|ua| ua.as_str()),
                         )
+                    } else if path.starts_with("/media/") {
+                        FileSendService::<C>::serve_media(
+                            &req,
+                            base_dir,
+                            path,
+                            collections,
+                            collection_index,
+                        )
                     } else if path.starts_with("/folder/") {
                         let group = params.get_string("group");
                         get_folder(
@@ -806,6 +808,45 @@ impl<C: 'static> FileSendService<C> {
         let seek: Option<f32> = params.get("seek").and_then(|s| s.parse().ok());
 
         send_file(base_dir, get_subpath(path, "/audio/"), bytes_range, seek)
+    }
+
+    fn serve_media(
+        req: &RequestWrapper,
+        base_dir: &'static Path,
+        path: &str,
+        collections: Arc<Collections>,
+        collection_index: usize,
+    ) -> ResponseFuture {
+        debug!(
+            "Received request with following headers {:?}",
+            req.headers()
+        );
+        let range = req.headers().typed_get::<Range>();
+        
+
+        let bytes_range = match range.map(|r| r.iter().collect::<Vec<_>>()) {
+            Some(bytes_ranges) => {
+                if bytes_ranges.is_empty() {
+                    error!("Range header without range bytes");
+                    return resp::fut(resp::bad_request);
+                } else if bytes_ranges.len() > 1 {
+                    error!("Range with multiple ranges is not supported");
+                    return resp::fut(resp::not_implemented);
+                } else {
+                    Some(bytes_ranges[0])
+                }
+            }
+
+            None => None,
+        };
+        let track_id: Option<u32> = get_subpath(path, "/media/").to_str().and_then(|s| s.parse().ok());
+        match collections.get_audio_track(collection_index, track_id.unwrap()) {
+            Ok(af) => send_file(base_dir, af.path, bytes_range, None),
+            Err(e) => {
+                error!("Error while retrieving track {:?} info, {}", track_id, e);
+                resp::fut(resp::not_found)
+            }
+        }
     }
 }
 
@@ -956,43 +997,25 @@ fn process_message(msg: String, collections: Arc<Collections>, devices: Arc<Devi
                 };
                 send_to_all_devices(make_device_active, devices.clone())
             }
-            MsgIn::PlayTrack { collection, dir, track_position } => {
-                debug!("PlayTrack: {} {} {}", collection, dir, track_position);
-                let play_track = MsgOut::PlayTrackEvent { collection: collection, dir: dir, track_position: track_position };
+            MsgIn::PlayTrack { collection, track_id } => {
+                debug!("PlayTrack: {} {}", collection, track_id);
+                let play_track = MsgOut::PlayTrackEvent { collection, track_id };
                 send_to_all_devices(play_track, devices.clone())
             }
-            MsgIn::NextTrack { collection, dir } => {
+            MsgIn::NextTrack { collection} => {
                 let shuffle_mode = devices.shuffle_mode.lock().unwrap().to_owned();
-                let mut cur_dir_shuffle_tracks = devices.cur_dir_shuffle_tracks.lock().unwrap();
                 let collections = collections.clone();
                 match shuffle_mode {
                     ShuffleMode::Off => {
                         debug!("Shuffle is off");
                     },
-                    ShuffleMode::CurrentDir => {
+                    ShuffleMode::CollectionWide | ShuffleMode::CurrentDir => {
                         debug!("Current dir");
-                        let track_count = collections.count_files_in_dir(collection, PathBuf::from(dir.clone())).unwrap();
-                        // let rnd: usize = rand::thread_rng().gen_range(0..(track_count));
-                        // cur_dir_played_tracks.insert(rnd);
-                        if devices.cur_dir_shuffle_cursor.load(Ordering::SeqCst) >= track_count {
-                            cur_dir_shuffle_tracks.clear();
-                            devices.cur_dir_shuffle_cursor.store(0, Ordering::SeqCst);
-                        }
+                        let track_count = collections.count_tracks(collection).unwrap();
+                        let rnd: usize = rand::thread_rng().gen_range(0..(track_count as usize));
 
-                        if cur_dir_shuffle_tracks.is_empty() {
-                            let mut shuffle_tracks: Vec<usize> = (0..track_count).collect();
-                            shuffle_tracks.shuffle(&mut rand::thread_rng());
-                            cur_dir_shuffle_tracks.extend(shuffle_tracks);
-                            devices.cur_dir_shuffle_cursor.store(0, Ordering::SeqCst);
-                        }
-                        let cursor = devices.cur_dir_shuffle_cursor.load(Ordering::SeqCst);
-                        let next_track = cur_dir_shuffle_tracks[cursor];
-                        let _ = devices.cur_dir_shuffle_cursor.compare_exchange(cursor, cursor + 1, Ordering::SeqCst, Ordering::SeqCst);
-                        let play_track = MsgOut::PlayTrackEvent { collection: collection, dir: dir, track_position: next_track as u32};
+                        let play_track = MsgOut::PlayTrackEvent { collection: collection, track_id: rnd as u32};
                         send_to_all_devices(play_track, devices.clone())
-                    },
-                    ShuffleMode::CollectionWide => {
-                        debug!("CollectionWide");
                     },
                     ShuffleMode::Global => {
                         debug!("Global");
@@ -1013,8 +1036,8 @@ fn process_message(msg: String, collections: Arc<Collections>, devices: Arc<Devi
                 let switch_shuffle = MsgOut::SwitchShuffleEvent { mode: mode };
                 send_to_all_devices_excluding(switch_shuffle, devices.clone(), Some(addr))
             },
-            MsgIn::CurrentPos { collection, path, track_position, time } => {
-                let current_pos = MsgOut::CurrentPosEvent { collection: collection, path: path, track_position: track_position, time: time };
+            MsgIn::CurrentPos { collection, track_id, time } => {
+                let current_pos = MsgOut::CurrentPosEvent { collection, track_id, time };
                 send_to_all_devices_excluding(current_pos, devices.clone(), Some(addr))
             },
             MsgIn::RewindTo { time } => {

@@ -9,7 +9,7 @@ use crate::common::{CollectionOptions, CollectionTrait, PositionsData, Positions
 use crate::error::{Error, Result};
 use crate::position::PositionsCollector;
 use crate::util::get_real_file_type;
-use crate::{AudioFolderShort, FoldersOrdering};
+use crate::{AudioFolderShort, FoldersOrdering, AudioFile};
 
 pub(crate) struct CollectionDirect {
     lister: FolderLister,
@@ -83,6 +83,14 @@ impl CollectionTrait for CollectionDirect {
         
         debug!("no_cache count_files_in_dir {:?}: {}", dir_path.as_ref().display(), dir.files.len());
         Ok(dir.files.len())
+    }
+
+    fn get_audio_track(&self, track_id: u32) -> Result<AudioFile> {
+        Err(Error::NotImplementedForDirectCollection)
+    }
+
+    fn count_tracks(&self) -> Result<u32> {
+        Err(Error::NotImplementedForDirectCollection)
     }
 }
 

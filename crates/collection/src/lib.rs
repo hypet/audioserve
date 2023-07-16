@@ -131,6 +131,23 @@ impl Collections {
             .list_all()
     }
 
+    pub fn count_tracks(
+        &self,
+        collection: usize,
+    ) -> Result<u32> {
+        self.get_cache(collection)?
+            .count_tracks()
+    }
+
+    pub fn get_audio_track(
+        &self,
+        collection: usize,
+        id: u32,
+    ) -> Result<AudioFile> {
+        self.get_cache(collection)?
+            .get_audio_track(id)
+    }
+
     pub fn count_files_in_dir<P: AsRef<Path>>(&self, collection: usize, dir_path: P) -> Result<usize> {
         self.get_cache(collection)?
             .count_files_in_dir(dir_path)

@@ -128,6 +128,19 @@ impl CacheInner {
             }
         }
     }
+
+    pub(crate) fn get_audio_track(&self, track_id: u32) -> Result<AudioFile> {
+        let map = self.tracks.lock().unwrap();
+        map.get(&track_id)
+            .map(|track| track.clone())
+            .ok_or(Error::TrackNotFound(track_id))
+    }
+
+    pub(crate) fn count_tracks(&self) -> Result<u32> {
+        let map = self.tracks.lock().unwrap();
+        Ok(map.len() as u32)
+    }
+
 }
 
 impl CacheInner {

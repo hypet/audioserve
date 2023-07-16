@@ -4,7 +4,7 @@ use crate::{
     error::{invalid_option, invalid_option_err, Error, Result},
     no_cache::CollectionDirect,
     position::PositionsCollector,
-    AudioFolderShort, FoldersOrdering, Position,
+    AudioFolderShort, FoldersOrdering, Position, AudioFile,
 };
 use enum_dispatch::enum_dispatch;
 use regex::{Regex, RegexBuilder};
@@ -262,6 +262,15 @@ pub(crate) trait CollectionTrait {
     fn list_all(
         &self,
     ) -> Result<AudioFolder>;
+
+    fn count_tracks(
+        &self,
+    ) -> Result<u32>;
+
+    fn get_audio_track(
+        &self,
+        track_id: u32,
+    ) -> Result<AudioFile>;
 
     fn count_files_in_dir<P>(
         &self,

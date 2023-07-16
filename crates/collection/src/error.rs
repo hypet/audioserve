@@ -59,6 +59,12 @@ pub enum Error {
 
     #[error("Invalid regex for CD folder: {0} {1}")]
     InvalidCDFolderRegex(String, regex::Error),
+
+    #[error("get_audio_track not implemented for direct collection")]
+    NotImplementedForDirectCollection,
+
+    #[error("No track with id: {0}")]
+    TrackNotFound(u32),
 }
 
 macro_rules! invalid_option_err {

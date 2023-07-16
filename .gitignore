@@ -4,11 +4,9 @@
 Cargo.lock
 .vscode
 *.old
-/client/node_modules
+/client/*
 npm-debug.log
-client/dist/bundle.js
 *.log
 rls/
 _static_build
 /crates/**/Cargo.lock
-client/dist/bundle.js.LICENSE.txt

@@ -279,6 +279,11 @@ impl CollectionCache {
 }
 
 impl CollectionTrait for CollectionCache {
+
+    fn count_tracks(&self) -> Result<u32> {
+        self.inner.count_tracks()
+    }
+
     fn list_all(&self) -> Result<AudioFolder> {
         let af = self.inner.list_all().unwrap();
         Ok(af)
@@ -418,6 +423,10 @@ impl CollectionTrait for CollectionCache {
     where
         P: AsRef<Path> {
         self.inner.count_files(dir_path)
+    }
+
+    fn get_audio_track(&self,track_id:u32,) -> Result<AudioFile> {
+        self.inner.get_audio_track(track_id)
     }
 }
 

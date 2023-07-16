@@ -110,6 +110,7 @@ impl FolderLister {
                 match audio_info {
                     Ok(meta) => {
                         counter += 1;
+                        let mime = guess_mime_type(entry_path);
                         let tags = meta.get_audio_info(&self.config.tags);
                         let af = AudioFile {
                             id: counter,
@@ -117,7 +118,7 @@ impl FolderLister {
                             path: entry_path.to_path_buf(),
                             name: format!("{}", entry.file_name().to_str().unwrap()).into(),
                             section: None,
-                            mime: "audio".to_string(),
+                            mime: mime.to_string(),
                         };
         
                         files.push(af);
