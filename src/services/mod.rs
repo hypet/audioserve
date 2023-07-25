@@ -979,8 +979,12 @@ fn process_message(msg: String, collections: Arc<Collections>, devices: Arc<Devi
     match message {
         Ok(message) => match message {
             MsgIn::RegisterDevice { name } => {
+                let device_count = devices.map.len();
                 let mut device = devices.map.get_mut(&addr).unwrap();
                 device.name = Some(name);
+                if device_count == 1 {
+                    device.active = true;
+                }
                 debug!("RegisterDevice: {:?}", device.id);
                 let reg_device_event = MsgOut::RegisterDeviceEvent {
                     device_id: device.id.clone()
