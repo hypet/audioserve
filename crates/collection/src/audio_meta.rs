@@ -284,7 +284,7 @@ pub trait MediaInfo<'a>: Sized {
 }
 
 mod libavformat {
-    use lofty::{Tag, TagType, ItemKey, AudioFile};
+    use lofty::{Tag, TagType, ItemKey, AudioFile, TaggedFileExt};
 
     use super::*;
     use std::{collections::HashSet, sync::Once};

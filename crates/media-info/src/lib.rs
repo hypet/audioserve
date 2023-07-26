@@ -41,7 +41,7 @@ impl MediaFile {
 
         let tagged_file_res = Probe::open(path)
             .expect("ERROR: Bad path provided!")
-            .read(true);
+            .read();
         let tagged_file = match tagged_file_res {
             Ok(file) => file,
             Err(e) => {
@@ -75,6 +75,8 @@ impl MediaFile {
 mod tests {
     use core::panic;
 
+    use lofty::TaggedFileExt;
+
     use super::*;
 
     #[test]
@@ -82,7 +84,7 @@ mod tests {
         let path = Path::new(r"f:\music\!Hard\Linkin Park\01-Linkin Park--Wake.mp3");
         let tagged_file_res = Probe::open(path)
             .expect("ERROR: Bad path provided!")
-            .read(true)
+            .read()
             .unwrap();
         
         let tag = match tagged_file_res.primary_tag() {
@@ -92,9 +94,9 @@ mod tests {
                 None => panic!("no tags"),
             },
         };
-        println!("Title: {}", tag.title().unwrap_or("None"));
-        println!("Artist: {}", tag.artist().unwrap_or("None"));
-        println!("Album: {}", tag.album().unwrap_or("None"));
-        println!("Genre: {}", tag.genre().unwrap_or("None"));
+        // println!("Title: {}", tag.title().unwrap_or("None"));
+        // println!("Artist: {}", tag.artist().unwrap_or("None"));
+        // println!("Album: {}", tag.album().unwrap_or("None"));
+        // println!("Genre: {}", tag.genre().unwrap_or("None"));
     }
 }

@@ -1004,7 +1004,7 @@ fn process_message(msg: String, collections: Arc<Collections>, devices: Arc<Devi
             MsgIn::PlayTrack { collection, track_id } => {
                 debug!("PlayTrack: {} {}", collection, track_id);
                 let play_track = MsgOut::PlayTrackEvent { collection, track_id };
-                send_to_all_devices(play_track, devices.clone())
+                send_to_all_devices_excluding(play_track, devices.clone(), Some(addr))
             }
             MsgIn::NextTrack { collection} => {
                 let shuffle_mode = devices.shuffle_mode.lock().unwrap().to_owned();
