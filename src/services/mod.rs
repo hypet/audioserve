@@ -971,7 +971,7 @@ pub fn handle_request(
 }
 
 fn process_message(msg: String, collections: Arc<Collections>, devices: Arc<Devices>, addr: SocketAddr) {
-    debug!("Got message {:?} from {}", msg, addr);
+    // debug!("Got message {:?} from {}", msg, addr);
     let message: Result<MsgIn, Error> = msg.parse();
 
     let devices = devices.clone();
@@ -991,6 +991,9 @@ fn process_message(msg: String, collections: Arc<Collections>, devices: Arc<Devi
                 };
                 send_to_device(reg_device_event, devices.clone(), addr);
                 send_updated_device_list(devices.clone());
+                let shuffle_lock = devices.shuffle_mode.lock().unwrap();
+                let switch_shuffle = MsgOut::SwitchShuffleEvent { mode: *shuffle_lock };
+                send_to_device(switch_shuffle, devices.clone(), addr)
             }
             MsgIn::MakeDeviceActive { device_id } => {
                 let device_key = find_device_key_by_id(devices.clone(), &device_id);
@@ -1112,7 +1115,7 @@ fn send_to_all_devices(msg: MsgOut, devices: Arc<Devices>) {
 fn send_to_all_devices_excluding(msg: MsgOut, devices: Arc<Devices>, device_to_exclude: Option<SocketAddr>) {
     tokio::spawn(async move {
         let m = Msg(msg);
-        debug!("Sending msg to all but {:?}: {:?}", device_to_exclude, m);
+        // debug!("Sending msg to all but {:?}: {:?}", device_to_exclude, m);
         let inactive_devices: Vec<SocketAddr> = devices.map.iter()
             .filter(|ref_multi| {
                 device_to_exclude.is_none() || (device_to_exclude.is_some() && *ref_multi.key() != device_to_exclude.unwrap())
