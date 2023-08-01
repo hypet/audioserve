@@ -39,7 +39,7 @@ use tokio_tungstenite::tungstenite::Message;
 use uuid::Uuid;
 use std::iter::FromIterator;
 use std::str::FromStr;
-use std::sync::Mutex;
+use std::sync::{Mutex, RwLock};
 use std::time::Duration;
 use std::{
     borrow::Cow,
@@ -50,7 +50,7 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::{atomic::AtomicUsize, Arc},
+    sync::Arc,
     task::Poll,
 };
 use tokio_tungstenite::WebSocketStream;
@@ -77,9 +77,8 @@ pub enum RemoteIpAddr {
 #[derive(Clone, Debug)]
 struct Device {
     name: Option<String>,
-    id: String,
+    id: Uuid,
     ws: Tx,
-    active: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -92,14 +91,16 @@ struct ClientDevice {
 #[derive(Debug)]
 pub struct Devices {
     map: DashMap<SocketAddr, Device>,
-    shuffle_mode: Mutex<ShuffleMode>,
+    shuffle_mode: RwLock<ShuffleMode>,
+    active_device_id: RwLock<Option<Uuid>>,
 }
 
 impl Devices {
     pub fn new() -> Self {
         Devices {
             map: DashMap::new(),
-            shuffle_mode: Mutex::new(ShuffleMode::Off),
+            shuffle_mode: RwLock::new(ShuffleMode::Off),
+            active_device_id: RwLock::new(Option::None),
         }
     }
 }
@@ -860,16 +861,19 @@ async fn handle_connection(
 
     // Insert the write part of this peer to the peer map.
     let (tx, rx) = unbounded();
-    let device_uuid = Uuid::new_v4().to_string();
+    let device_uuid = Uuid::new_v4();
     devices.map.insert(
         addr,
         Device {
             name: None,
             id: device_uuid.clone(),
             ws: tx,
-            active: false,
         },
     );
+    if devices.map.len() == 1 {
+        let mut active_device_id = devices.active_device_id.write().unwrap();
+        *active_device_id = Some(device_uuid);
+    }
 
     let (outgoing, incoming) = ws_stream.split();
 
@@ -979,26 +983,28 @@ fn process_message(msg: String, collections: Arc<Collections>, devices: Arc<Devi
     match message {
         Ok(message) => match message {
             MsgIn::RegisterDevice { name } => {
-                let device_count = devices.map.len();
                 let mut device = devices.map.get_mut(&addr).unwrap();
                 device.name = Some(name);
-                if device_count == 1 {
-                    device.active = true;
-                }
                 debug!("RegisterDevice: {:?}", device.id);
                 let reg_device_event = MsgOut::RegisterDeviceEvent {
-                    device_id: device.id.clone()
+                    device_id: device.id.to_string()
                 };
                 send_to_device(reg_device_event, devices.clone(), addr);
                 send_updated_device_list(devices.clone());
-                let shuffle_lock = devices.shuffle_mode.lock().unwrap();
+                let shuffle_lock = devices.shuffle_mode.read().unwrap();
                 let switch_shuffle = MsgOut::SwitchShuffleEvent { mode: *shuffle_lock };
                 send_to_device(switch_shuffle, devices.clone(), addr)
             }
             MsgIn::MakeDeviceActive { device_id } => {
-                let device_key = find_device_key_by_id(devices.clone(), &device_id);
-                let mut device = devices.map.get_mut(&device_key).unwrap();
-                device.active = true;
+                let uuid = Uuid::from_str(&device_id).unwrap();
+                let device_key = find_device_key_by_id(devices.clone(), uuid);
+                match devices.map.get(&device_key) {
+                    Some(_) => {
+                        let mut active_device_id = devices.active_device_id.write().unwrap();
+                        *active_device_id = Some(uuid);
+                    },
+                    None => error!("Device not found for id {}", device_id),
+                }
                 let make_device_active = MsgOut::MakeDeviceActiveEvent {
                     device_id: device_id,
                 };
@@ -1009,8 +1015,9 @@ fn process_message(msg: String, collections: Arc<Collections>, devices: Arc<Devi
                 let play_track = MsgOut::PlayTrackEvent { collection, track_id };
                 send_to_all_devices_excluding(play_track, devices.clone(), Some(addr))
             }
+            // Currently the client side decides what track to play and in what order. To be removed.
             MsgIn::NextTrack { collection} => {
-                let shuffle_mode = devices.shuffle_mode.lock().unwrap().to_owned();
+                let shuffle_mode = devices.shuffle_mode.read().unwrap().to_owned();
                 let collections = collections.clone();
                 match shuffle_mode {
                     ShuffleMode::Off => {
@@ -1038,7 +1045,7 @@ fn process_message(msg: String, collections: Arc<Collections>, devices: Arc<Devi
                 send_to_all_devices_excluding(resume, devices.clone(), Some(addr))
             },
             MsgIn::SwitchShuffle { mode } => {
-                let mut mutex = devices.shuffle_mode.lock().unwrap();
+                let mut mutex = devices.shuffle_mode.write().unwrap();
                 *mutex = mode.clone();
                 let switch_shuffle = MsgOut::SwitchShuffleEvent { mode: mode };
                 send_to_all_devices_excluding(switch_shuffle, devices.clone(), Some(addr))
@@ -1062,7 +1069,7 @@ fn process_message(msg: String, collections: Arc<Collections>, devices: Arc<Devi
     }
 }
 
-fn find_device_key_by_id(devices: Arc<Devices>, device_id: &str) -> SocketAddr {
+fn find_device_key_by_id(devices: Arc<Devices>, device_id: Uuid) -> SocketAddr {
     let ref_key_value = devices.map.iter()
         .find(|ref_multi| ref_multi.value().id == device_id)
         .unwrap();
@@ -1072,14 +1079,19 @@ fn find_device_key_by_id(devices: Arc<Devices>, device_id: &str) -> SocketAddr {
 fn send_updated_device_list(devices: Arc<Devices>) {
     tokio::spawn(async move {
         debug!("creating device list...");
+        let active_device_id_guard = devices.active_device_id.read().unwrap();
+        let active_device_id = *active_device_id_guard;
+        if active_device_id.is_none() {
+            info!("No active devices");
+        }
         let device_list: Vec<ClientDevice> = devices.map
             .iter()
             .map(|ref_multi| { 
                 let d = ref_multi.value();
                 ClientDevice {
                     name: d.name.as_ref().unwrap().clone(),
-                    id: d.id.clone(),
-                    active: d.active,
+                    id: d.id.to_string(),
+                    active: active_device_id.is_some_and(|id| d.id == id),
                 }
             })
             .collect();
