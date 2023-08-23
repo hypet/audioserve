@@ -112,10 +112,15 @@ impl FolderLister {
                         counter += 1;
                         let mime = guess_mime_type(entry_path);
                         let tags = meta.get_audio_info(&self.config.tags);
+                        let parent_dir = match entry_path.parent() {
+                            Some(parent) => Some(String::from(parent.as_os_str().to_str().unwrap())),
+                            None => None,
+                        };
                         let af = AudioFile {
                             id: counter,
                             meta: tags,
                             path: entry_path.to_path_buf(),
+                            parent_dir: parent_dir,
                             name: format!("{}", entry.file_name().to_str().unwrap()).into(),
                             section: None,
                             mime: mime.to_string(),
@@ -251,6 +256,7 @@ impl FolderLister {
     ) -> Result<AudioFolder, io::Error> {
         match fs::read_dir(&full_path) {
             Ok(dir_iter) => {
+                info!("list_dir_dir");
                 let mut files = vec![];
                 let mut subfolders = vec![];
                 let mut cover = None;
@@ -309,6 +315,7 @@ impl FolderLister {
                                                     id: 0u32,
                                                     meta,
                                                     path,
+                                                    parent_dir: None,
                                                     name: f.file_name().to_string_lossy().into(),
                                                     section: None,
                                                     mime: mime.to_string(),
@@ -454,6 +461,7 @@ impl FolderLister {
         chapters: Vec<Chapter>,
         collapse: bool,
     ) -> Result<AudioFolder, io::Error> {
+        debug!("list_dir_file");
         let path = full_path.strip_prefix(&base_dir).unwrap();
         let mime = guess_mime_type(&path);
         let mut tags = None;
@@ -482,6 +490,7 @@ impl FolderLister {
                     id: 0u32,
                     meta: Some(new_meta),
                     path: path_for_chapter(path, &chap, collapse)?,
+                    parent_dir: None,
                     name: format!("{:03} - {}", chap.number, chap.title).into(),
                     section: Some(FileSection {
                         start: chap.start,

@@ -425,7 +425,7 @@ impl CollectionTrait for CollectionCache {
         self.inner.count_files(dir_path)
     }
 
-    fn get_audio_track(&self,track_id:u32,) -> Result<AudioFile> {
+    fn get_audio_track(&self, track_id:u32) -> Result<AudioFile> {
         self.inner.get_audio_track(track_id)
     }
 }
