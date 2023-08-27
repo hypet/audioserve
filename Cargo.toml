@@ -84,8 +84,6 @@ collation = ["collection/collation"]
 collation-static = ["collection/collation-static"]
 tags-encoding = ["collection/tags-encoding"]
 
-
-
 [profile.release]
 lto = true
 codegen-units = 1

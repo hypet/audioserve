@@ -464,10 +464,10 @@ const STATIC_FILE_NAMES: &[&str] = &[
     "/service-worker.js",
 ];
 
-const STATIC_DIR: &str = "/static/";
+const ASSETS_DIR: &str = "/assets/";
 
 fn is_static_file(path: &str) -> bool {
-    STATIC_FILE_NAMES.contains(&path) || path.starts_with(STATIC_DIR)
+    STATIC_FILE_NAMES.contains(&path) || path.starts_with(ASSETS_DIR)
 }
 
 #[allow(clippy::type_complexity)]

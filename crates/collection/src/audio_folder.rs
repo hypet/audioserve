@@ -120,7 +120,7 @@ impl FolderLister {
                             id: counter,
                             meta: tags,
                             path: entry_path.to_path_buf(),
-                            parent_dir: parent_dir,
+                            parent_dir,
                             name: format!("{}", entry.file_name().to_str().unwrap()).into(),
                             section: None,
                             mime: mime.to_string(),
