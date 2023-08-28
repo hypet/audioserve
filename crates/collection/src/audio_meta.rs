@@ -99,13 +99,8 @@ pub struct AudioFolder {
     pub modified: Option<TimeStamp>, // last modification time of this folder
     pub total_time: Option<u32>,     // total playback time of contained audio files
     pub files: Vec<AudioFile>,
-    pub subfolders: Vec<AudioFolderShort>,
     pub cover: Option<TypedFile>, // cover is file in folder - either jpg or png
     pub description: Option<TypedFile>, // description is file in folder - either txt, html, md
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(skip_deserializing)]
-    #[serde(default)]
-    pub position: Option<PositionShort>, // optional last know playback position in this folder
     pub tags: Option<HashMap<String, String>>, // metadata tags, which are applicable for whole folder
 }
 

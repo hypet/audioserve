@@ -6,10 +6,10 @@ use self::{
 use crate::{
     audio_folder::FolderLister,
     audio_meta::{AudioFolder, FolderByModification, TimeStamp},
-    cache::update::{filter_event, FilteredEvent, RecursiveUpdater},
+    cache::update::{filter_event, FilteredEvent},
     common::{CollectionOptions, CollectionTrait, PositionsData, PositionsTrait},
     error::{Error, Result},
-    position::{Position, PositionShort, PositionsCollector},
+    position::{Position, PositionsCollector},
     util::get_modified,
     AudioFolderShort, FoldersOrdering, AudioFile,
 };
@@ -97,6 +97,8 @@ impl CollectionCache {
                 HashMap::new()
             },
         };
+
+        
         let tracks = Arc::new(Mutex::new(track_map));
         Ok(CollectionCache {
             inner: Arc::new(CacheInner::new(
@@ -150,13 +152,6 @@ impl CollectionCache {
             // clean up non-exitent directories
             inner.clean_up_folders();
 
-            // inittial scan of directory
-            let updater = RecursiveUpdater::new(&inner, None, force_update);
-            updater.process();
-
-            // clean up positions for non existent folders
-            inner.clean_up_positions();
-
             inner
                 .read_json_positions(backup_data)
                 .map_err(|e| error!("Restore of collection {:?} failed: {}", inner.base_dir(), e))
@@ -200,14 +195,6 @@ impl CollectionCache {
 
                 // clean up non-exitent directories
                 inner.clean_up_folders();
-
-                // initial scan of directory
-                let updater = RecursiveUpdater::new(&inner, None, force_update);
-                updater.process();
-                force_update = false;
-
-                // clean up positions for non existent folders
-                inner.clean_up_positions();
 
                 // Notify about finish of initial scan
                 {
@@ -300,13 +287,6 @@ impl CollectionTrait for CollectionCache {
         let ts = get_modified(&full_path);
         self.inner
             .get_if_actual(dir_path, ts)
-            .map(|mut af| {
-                if matches!(ordering, FoldersOrdering::RecentFirst) {
-                    af.subfolders
-                        .sort_unstable_by(|a, b| a.compare_as(ordering, b));
-                }
-                af
-            })
             .ok_or_else(|| {
                 debug!("Fetching folder {:?} from file system", dir_path);
                 self.inner.list_dir(dir_path, ordering)
@@ -317,11 +297,6 @@ impl CollectionTrait for CollectionCache {
                         // We should update cache as we got new info
                         debug!("Updating cache for dir {:?}", full_path);
                         let mut af = af_ref.clone();
-                        if matches!(ordering, FoldersOrdering::RecentFirst) {
-                            af.subfolders.sort_unstable_by(|a, b| {
-                                a.compare_as(FoldersOrdering::Alphabetical, b)
-                            });
-                        }
                         self.inner
                             .update(dir_path, af)
                             .map_err(|e| error!("Cannot update collection: {}", e))
@@ -334,28 +309,6 @@ impl CollectionTrait for CollectionCache {
                     }
                 }
                 r
-            })
-            .map(|mut af| {
-                if let Some(group) = group {
-                    let folder = dir_path.to_str();
-                    if let Some(folder) = folder {
-                        let pos = self.get_position(&group, Some(folder)).and_then(|p| {
-                            dir_path.join(&p.file).to_str().map(|path| PositionShort {
-                                path: path.to_string(),
-                                timestamp: p.timestamp,
-                                position: p.position,
-                            })
-                        });
-                        af.position = pos;
-                        self.inner.update_subfolders(group, &mut af.subfolders)
-                    } else {
-                        warn!(
-                            "Folder path {:?} is not UTF8, cannot get position",
-                            dir_path
-                        )
-                    }
-                }
-                af
             })
     }
 
@@ -586,12 +539,10 @@ mod tests {
         let entry1 = col.get("").unwrap();
         let entry2 = col.get("usak/kulisak").unwrap();
         assert_eq!(2, entry1.files.len());
-        assert_eq!(2, entry1.subfolders.len());
         assert_eq!(0, entry2.files.len());
 
         let entry3 = col.get("01-file.mp3").unwrap();
         assert_eq!(3, entry3.files.len());
-        assert_eq!(0, entry3.subfolders.len());
     }
 
     #[test]

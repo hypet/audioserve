@@ -132,66 +132,6 @@ impl OngoingUpdater {
     }
 }
 
-pub(super) struct RecursiveUpdater<'a> {
-    queue: VecDeque<AudioFolderShort>,
-    inner: &'a CacheInner,
-    force_update: bool,
-}
-
-impl<'a> RecursiveUpdater<'a> {
-    pub(super) fn new(
-        inner: &'a CacheInner,
-        root: Option<AudioFolderShort>,
-        force_update: bool,
-    ) -> Self {
-        let root = root.unwrap_or_else(|| AudioFolderShort {
-            name: "root".into(),
-            path: Path::new("").into(),
-            is_file: false,
-            modified: None,
-            finished: false,
-        });
-        let mut queue = VecDeque::new();
-        queue.push_back(root);
-        RecursiveUpdater {
-            queue,
-            inner,
-            force_update,
-        }
-    }
-
-    pub(super) fn process(mut self) {
-        while let Some(folder_info) = self.queue.pop_front() {
-            // process AF
-            let full_path = self.inner.base_dir().join(&folder_info.path);
-            let mod_ts = get_modified(full_path);
-            let af = match if self.force_update {
-                None
-            } else {
-                self.inner.get_if_actual(&folder_info.path, mod_ts)
-            } {
-                None => match self.inner.force_update(&folder_info.path, true) {
-                    Ok(af) => {
-                        af.unwrap() // safe to unwrap as we set ret param
-                    }
-                    Err(e) => {
-                        error!(
-                            "Cannot update audio folder {:?}, error {}",
-                            folder_info.path, e
-                        );
-                        continue;
-                    }
-                },
-                Some(af) => {
-                    debug!("For path {:?} using cached data", folder_info.path);
-                    af
-                }
-            };
-            self.queue.extend(af.subfolders)
-        }
-    }
-}
-
 pub(crate) enum FilteredEvent {
     Pass(DebouncedEvent),
     Error(notify::Error, Option<PathBuf>),

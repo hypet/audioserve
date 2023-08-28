@@ -17,7 +17,6 @@ use crate::{
     audio_folder::{DirType, FolderLister},
     audio_meta::{AudioFolder, TimeStamp},
     cache::{
-        update::RecursiveUpdater,
         util::{split_path, update_path},
     },
     common::PositionsData,
@@ -91,10 +90,8 @@ impl CacheInner {
             modified: Some(TimeStamp::now()),
             total_time: Some(100),
             files: files,
-            subfolders: vec![],
             cover: None,
             description: None,
-            position: None,
             tags: None,
         };
         Ok(af)
@@ -632,16 +629,6 @@ impl CacheInner {
 // Updating based on fs events
 impl CacheInner {
     fn force_update_recursive<P: Into<PathBuf>>(&self, folder: P) {
-        let folder = folder.into();
-        let af: AudioFolderShort = AudioFolderShort {
-            name: get_file_name(&folder).into(),
-            modified: None,
-            path: folder,
-            is_file: false,
-            finished: false,
-        };
-        let updater = RecursiveUpdater::new(self, Some(af), false);
-        updater.process();
     }
 
     fn update_recursive_after_rename(&self, from: &Path, to: &Path) -> Result<()> {
@@ -675,10 +662,6 @@ impl CacheInner {
                 }
             }
             delete_batch.remove(k);
-            for sf in folder_rec.subfolders.iter_mut() {
-                let new_path = update_path(from, to, &sf.path)?;
-                sf.path = new_path;
-            }
             for f in folder_rec.files.iter_mut() {
                 let new_path = update_path(from, to, &f.path)?;
                 f.path = new_path;

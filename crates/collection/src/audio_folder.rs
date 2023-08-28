@@ -143,10 +143,8 @@ impl FolderLister {
             modified: None,
             total_time: None,
             files,
-            subfolders: vec![],
             cover: None,
             description: None,
-            position: None,
             tags: None,
         })
     }
@@ -367,62 +365,12 @@ impl FolderLister {
                         }
                     }
                 } else {
-                    if !subfolders.is_empty() {
-                        if let Some(ref re) = self.config.cd_folder_regex {
-                            let can_collapse =
-                                |f: &AudioFolderShort| !f.is_file && re.is_match(&f.name);
-                            let will_collapse = subfolders.iter().any(can_collapse);
-                            if will_collapse {
-                                is_collapsed = true;
-                                debug!("Can collapse CD subfolders on path {:?}", full_path);
-                                let folders = mem::replace(&mut subfolders, vec![]);
-                                for fld in folders {
-                                    if can_collapse(&fld) {
-                                        let prefix: String = fld.name.into();
-                                        let subdir_path = base_dir.as_ref().join(&fld.path);
-                                        let subdir_name = fld.path.file_name();
-                                        let subdir = self.list_dir_dir(
-                                            base_dir.as_ref(),
-                                            subdir_path,
-                                            FoldersOrdering::Alphabetical,
-                                            false,
-                                        )?;
-                                        if !subdir.subfolders.is_empty() {
-                                            warn!("CD folder contains subfolders, these will not be visible");
-                                        }
-                                        for mut f in subdir.files {
-                                            if let (Some(file_name), Some(subdir_name)) =
-                                                (f.path.file_name(), subdir_name)
-                                            {
-                                                f.name = (prefix.clone() + " " + &f.name).into();
-                                                let mut new_file_name = subdir_name.to_owned();
-                                                new_file_name.push("$$");
-                                                new_file_name.push(file_name);
-                                                let mut new_path = fld.path.clone();
-                                                new_path.set_file_name(new_file_name);
-                                                f.path = new_path;
-                                                files.push(f);
-                                            } else {
-                                                warn!(
-                                                    "CD subfolder in wrong position: ${:?}",
-                                                    fld.path
-                                                );
-                                            }
-                                        }
-                                    } else {
-                                        subfolders.push(fld);
-                                    }
-                                }
-                            }
-                        }
-                    }
                     files.sort_unstable_by(|a, b| a.collate(b));
                     tags = if extract_tags {
                         extract_folder_tags(&mut files)
                     } else {
                         None
                     };
-                    subfolders.sort_unstable_by(|a, b| a.compare_as(ordering, b));
                 }
 
                 extend_audiofolder(
@@ -433,10 +381,8 @@ impl FolderLister {
                         modified: None,
                         total_time: None,
                         files,
-                        subfolders,
                         cover,
                         description,
-                        position: None,
                         tags,
                     },
                 )
@@ -509,10 +455,8 @@ impl FolderLister {
                 modified: None,
                 total_time: None,
                 files,
-                subfolders: vec![],
                 cover: None,
                 description: None,
-                position: None,
                 tags,
             },
         )
@@ -924,11 +868,9 @@ mod tests {
         assert!(res.is_ok());
         let folder = res.unwrap();
         let num_media_files = 2;
-        let num_folders = 2;
         assert_eq!(folder.files.len(), num_media_files);
         assert!(folder.cover.is_some());
         assert!(folder.description.is_some());
-        assert_eq!(num_folders, folder.subfolders.len());
     }
 
     #[test]
