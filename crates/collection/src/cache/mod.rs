@@ -51,6 +51,9 @@ impl CollectionCache {
         let db_path = CollectionCache::db_path(&root_path, &db_dir)?;
         let mut options_file = db_path.clone();
         options_file.set_extension("options.json");
+        let mut tracklist_file = db_path.clone();
+
+        tracklist_file.set_extension("json");
         let mut force_update = opt.force_cache_update_on_init;
 
         let save_options = || match File::create(&options_file) {
@@ -60,6 +63,7 @@ impl CollectionCache {
             },
             Err(e) => error!("Cannot create {:?} : {}", options_file, e),
         };
+
         match File::open(&options_file).and_then(|f| {
             serde_json::from_reader::<_, CollectionOptions>(f)
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
@@ -81,6 +85,37 @@ impl CollectionCache {
             }
         }
 
+        let lister = FolderLister::new_with_options(opt.into());
+
+        let track_map: HashMap<u32, AudioFile> = match File::open(&tracklist_file).and_then(|f| {
+            serde_json::from_reader::<_, HashMap<u32, AudioFile>>(f)
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+        }) {
+            Ok(tracklist) => {
+                tracklist
+            }
+            Err(e) => {
+                warn!("Cannot read track list on {:?} due to {}, will enforce full cache update", root_path, e);
+
+                let track_map: HashMap<u32, AudioFile> = match lister.list_all(&root_path) {
+                    Ok(af) => af.files.iter().map(|t| (t.id, t.to_owned())).collect(),
+                    Err(e) => {
+                        error!("Failed to build track list at {:?}: {}", &root_path, e);
+                        HashMap::new()
+                    },
+                };
+                match File::create(&tracklist_file) {
+                    Ok(f) => match serde_json::to_writer(f, &track_map) {
+                        Ok(_) => debug!("Created track list file {:?}", tracklist_file),
+                        Err(e) => error!("Cannot create {:?} : {}", tracklist_file, e),
+                    },
+                    Err(e) => error!("Cannot create {:?} : {}", options_file, e),
+                };
+
+                track_map
+            }
+        };
+
         let db = sled::Config::default()
             .path(&db_path)
             .use_compression(true)
@@ -89,17 +124,7 @@ impl CollectionCache {
             .open()?;
         let (update_sender, update_receiver) = channel::<Option<UpdateAction>>();
 
-        let lister = FolderLister::new_with_options(opt.into());
-        let track_map: HashMap<u32, AudioFile> = match lister.list_all(&root_path) {
-            Ok(af) => af.files.iter().map(|t| (t.id, t.to_owned())).collect(),
-            Err(e) => {
-                error!("Failed to build track list at {:?}: {}", &root_path, e);
-                HashMap::new()
-            },
-        };
-
-        
-        let tracks = Arc::new(Mutex::new(track_map));
+        let tracks = Arc::new(Mutex::from(track_map));
         Ok(CollectionCache {
             inner: Arc::new(CacheInner::new(
                 db,
