@@ -84,6 +84,7 @@ pub struct AudioFile {
     pub id: u32,
     #[serde(with = "unicase_serde::unicase")]
     pub name: UniCase<String>,
+    #[serde(skip)]
     pub path: PathBuf,
     pub parent_dir: Option<String>,
     pub meta: Option<AudioMeta>,
