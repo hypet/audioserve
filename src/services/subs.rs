@@ -9,7 +9,7 @@ use crate::{
     error::{Error, Result},
     util::{checked_dec, into_range_bounds, to_satisfiable_range, ResponseBuilderExt},
 };
-use collection::{guess_mime_type, parse_chapter_path, FoldersOrdering};
+use collection::{guess_mime_type, parse_chapter_path, FoldersOrdering, audio_meta::{AudioFolder, AudioFile}};
 use futures::prelude::*;
 use futures::{future, ready, Stream};
 use headers::{AcceptRanges, CacheControl, ContentLength, ContentRange, ContentType, LastModified};
@@ -186,6 +186,7 @@ pub fn send_file<P: AsRef<Path>>(
     range: Option<ByteRange>,
     seek: Option<f32>
 ) -> ResponseFuture {
+    debug!("send_file: {:?}", file_path.as_ref());
     let (real_path, span) = parse_chapter_path(file_path.as_ref());
     let full_path = base_path.join(real_path);
     debug!("Sending file directly from fs");
@@ -216,11 +217,37 @@ pub fn get_all(
     Box::pin(
         blocking(move || collections.list_all(collection))
             .map_ok(|res| match res {
-                Ok(folder) => json_response(&folder),
+                Ok(folder) => {
+                    let af = AudioFolder {
+                        is_file: true,
+                        is_collapsed: false,
+                        modified: None,
+                        total_time: folder.total_time,
+                        files: folder.files.iter().map(|afi| AudioFile{
+                            id: afi.id,
+                            name: afi.name.clone(),
+                            parent_dir: pathbuf_to_str(&afi.path),
+                            meta: afi.meta.clone(),
+                            mime: afi.mime.clone()
+                        }).collect(),
+                        cover: None,
+                        description: None,
+                        tags: None
+                    };
+                    json_response(&af)
+                },
                 Err(_) => resp::not_found(),
             })
             .map_err(Error::new),
     )
+}
+
+fn pathbuf_to_str(path_buf: &PathBuf) -> Option<String> {
+    if cfg!(target_os = "windows") {
+        Some(path_buf.to_str().unwrap().replace("\\", "/").into())
+    } else {
+        Some(path_buf.to_str().unwrap().into())
+    }
 }
 
 #[cfg(feature = "folder-download")]

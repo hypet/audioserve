@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::{audio_meta::AudioFolder, AudioFolderShort};
+use crate::{audio_meta::AudioFolderInner, AudioFolderShort};
 
 pub fn update_path(
     from: &Path,
@@ -15,7 +15,7 @@ pub fn update_path(
     Ok(to.join(p))
 }
 
-pub fn deser_audiofolder<T: AsRef<[u8]>>(data: T) -> Option<AudioFolder> {
+pub fn deser_audiofolder<T: AsRef<[u8]>>(data: T) -> Option<AudioFolderInner> {
     bincode::deserialize(data.as_ref())
         .map_err(|e| error!("Error deserializing data from db {}", e))
         .ok()

@@ -15,7 +15,7 @@ use sled::{
 
 use crate::{
     audio_folder::{DirType, FolderLister},
-    audio_meta::{AudioFolder, TimeStamp},
+    audio_meta::{AudioFolderInner, TimeStamp},
     cache::{
         util::{split_path, update_path},
     },
@@ -23,7 +23,7 @@ use crate::{
     error::{Error, Result},
     position::{PositionItem, PositionRecord, PositionsCollector, MAX_GROUPS},
     util::{get_file_name, get_modified},
-    AudioFolderShort, FoldersOrdering, Position, AudioFile,
+    AudioFolderShort, FoldersOrdering, Position, AudioFileInner,
 };
 
 use super::{
@@ -39,7 +39,7 @@ pub(crate) struct CacheInner {
     lister: FolderLister,
     base_dir: PathBuf,
     update_sender: Sender<Option<UpdateAction>>,
-    tracks: Arc<Mutex<HashMap<u32, AudioFile>>>,
+    tracks: Arc<Mutex<HashMap<u32, AudioFileInner>>>,
 }
 
 impl CacheInner {
@@ -49,7 +49,7 @@ impl CacheInner {
         lister: FolderLister,
         base_dir: PathBuf,
         update_sender: Sender<Option<UpdateAction>>,
-        tracks: Arc<Mutex<HashMap<u32, AudioFile>>>,
+        tracks: Arc<Mutex<HashMap<u32, AudioFileInner>>>,
     ) -> Result<Self> {
         let pos_latest = db.open_tree("pos_latest")?;
         let pos_folder = db.open_tree("pos_folder")?;
@@ -75,16 +75,16 @@ impl CacheInner {
         &self,
         dir_path: P,
         ordering: FoldersOrdering,
-    ) -> Result<AudioFolder> {
+    ) -> Result<AudioFolderInner> {
         self.lister
             .list_dir(&self.base_dir, dir_path, ordering)
             .map_err(Error::from)
     }
 
-    pub(crate) fn list_all(&self) -> Result<AudioFolder> {
+    pub(crate) fn list_all(&self) -> Result<AudioFolderInner> {
         let map = self.tracks.lock().unwrap();
-        let files: Vec<AudioFile> = map.values().map(|f| f.to_owned()).collect();
-        let af = AudioFolder {
+        let files: Vec<AudioFileInner> = map.values().map(|f| f.to_owned()).collect();
+        let af = AudioFolderInner {
             is_file: false,
             is_collapsed: false,
             modified: Some(TimeStamp::now()),
@@ -126,7 +126,7 @@ impl CacheInner {
         }
     }
 
-    pub(crate) fn get_audio_track(&self, track_id: u32) -> Result<AudioFile> {
+    pub(crate) fn get_audio_track(&self, track_id: u32) -> Result<AudioFileInner> {
         let map = self.tracks.lock().unwrap();
         map.get(&track_id)
             .map(|track| track.clone())
@@ -141,7 +141,7 @@ impl CacheInner {
 }
 
 impl CacheInner {
-    pub(crate) fn get<P: AsRef<Path>>(&self, dir: P) -> Option<AudioFolder> {
+    pub(crate) fn get<P: AsRef<Path>>(&self, dir: P) -> Option<AudioFolderInner> {
         dir.as_ref()
             .to_str()
             .and_then(|p| {
@@ -165,7 +165,7 @@ impl CacheInner {
         &self,
         dir: P,
         ts: Option<SystemTime>,
-    ) -> Option<AudioFolder> {
+    ) -> Option<AudioFolderInner> {
         let af = self.get(dir);
         af.as_ref()
             .and_then(|af| af.modified)
@@ -186,7 +186,7 @@ impl CacheInner {
         })
     }
 
-    pub(crate) fn update<P: AsRef<Path>>(&self, dir: P, af: AudioFolder) -> Result<()> {
+    pub(crate) fn update<P: AsRef<Path>>(&self, dir: P, af: AudioFolderInner) -> Result<()> {
         let dir = dir.as_ref().to_str().ok_or(Error::InvalidCollectionPath)?;
         bincode::serialize(&af)
             .map_err(Error::from)
@@ -198,7 +198,7 @@ impl CacheInner {
         &self,
         dir_path: P,
         ret: bool,
-    ) -> Result<Option<AudioFolder>> {
+    ) -> Result<Option<AudioFolderInner>> {
         let af = self.lister.list_dir(
             &self.base_dir,
             dir_path.as_ref(),
@@ -640,7 +640,7 @@ impl CacheInner {
         for item in self.db.scan_prefix(from.to_str().unwrap()) {
             // safe to unwrap as we insert only valid strings
             let (k, v) = item?;
-            let mut folder_rec: AudioFolder = bincode::deserialize(&v)?;
+            let mut folder_rec: AudioFolderInner = bincode::deserialize(&v)?;
             let p: &Path = Path::new(unsafe { std::str::from_utf8_unchecked(&k) }); // we insert only valid strings as keys
             let new_key = update_path(from, to, p)?;
             let new_key = new_key.to_str().ok_or(Error::InvalidPath)?;

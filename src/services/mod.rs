@@ -785,8 +785,8 @@ impl<C: 'static> FileSendService<C> {
         user_agent: Option<&str>,
     ) -> ResponseFuture {
         debug!(
-            "Received request with following headers {:?}",
-            req.headers()
+            "serve_audio: Received request {} with headers {:?}",
+            req.path, req.headers()
         );
 
         let range = req.headers().typed_get::<Range>();
@@ -819,11 +819,10 @@ impl<C: 'static> FileSendService<C> {
         collection_index: usize,
     ) -> ResponseFuture {
         debug!(
-            "Received request with following headers {:?}",
-            req.headers()
+            "serve_media: Received request {} with headers {:?}",
+            req.path, req.headers()
         );
         let range = req.headers().typed_get::<Range>();
-        
 
         let bytes_range = match range.map(|r| r.iter().collect::<Vec<_>>()) {
             Some(bytes_ranges) => {
@@ -842,7 +841,7 @@ impl<C: 'static> FileSendService<C> {
         };
         let track_id: Option<u32> = get_subpath(path, "/media/").to_str().and_then(|s| s.parse().ok());
         match collections.get_audio_track(collection_index, track_id.unwrap()) {
-            Ok(af) => send_file(base_dir, af.path, bytes_range, None),
+            Ok(af) => send_file(base_dir, af.path.join(Path::new(af.name.as_str())), bytes_range, None),
             Err(e) => {
                 error!("Error while retrieving track {:?} info, {}", track_id, e);
                 resp::fut(resp::not_found)

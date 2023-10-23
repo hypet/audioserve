@@ -80,16 +80,37 @@ pub struct FileSection {
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+pub struct AudioFileInner {
+    pub id: u32,
+    #[serde(with = "unicase_serde::unicase")]
+    pub name: UniCase<String>,
+    pub path: PathBuf,
+    pub meta: Option<AudioMeta>,
+    pub mime: String,
+    pub section: Option<FileSection>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct AudioFile {
     pub id: u32,
     #[serde(with = "unicase_serde::unicase")]
     pub name: UniCase<String>,
-    #[serde(skip)]
-    pub path: PathBuf,
     pub parent_dir: Option<String>,
     pub meta: Option<AudioMeta>,
     pub mime: String,
-    pub section: Option<FileSection>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AudioFolderInner {
+    pub is_file: bool,
+    #[serde(default)]
+    pub is_collapsed: bool,
+    pub modified: Option<TimeStamp>, // last modification time of this folder
+    pub total_time: Option<u32>,     // total playback time of contained audio files
+    pub files: Vec<AudioFileInner>,
+    pub cover: Option<TypedFile>, // cover is file in folder - either jpg or png
+    pub description: Option<TypedFile>, // description is file in folder - either txt, html, md
+    pub tags: Option<HashMap<String, String>>, // metadata tags, which are applicable for whole folder
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

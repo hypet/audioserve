@@ -4,12 +4,12 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::audio_folder::FolderLister;
-use crate::audio_meta::AudioFolder;
+use crate::audio_meta::AudioFolderInner;
 use crate::common::{CollectionOptions, CollectionTrait, PositionsData, PositionsTrait};
 use crate::error::{Error, Result};
 use crate::position::PositionsCollector;
 use crate::util::get_real_file_type;
-use crate::{AudioFolderShort, FoldersOrdering, AudioFile};
+use crate::{AudioFolderShort, FoldersOrdering, AudioFileInner};
 
 pub(crate) struct CollectionDirect {
     lister: FolderLister,
@@ -35,7 +35,7 @@ impl CollectionTrait for CollectionDirect {
         dir_path: P,
         ordering: crate::FoldersOrdering,
         _group: Option<String>,
-    ) -> Result<AudioFolder>
+    ) -> Result<AudioFolderInner>
     where
         P: AsRef<std::path::Path>,
     {
@@ -46,7 +46,7 @@ impl CollectionTrait for CollectionDirect {
 
     fn list_all(
         &self,
-    ) -> Result<AudioFolder> {
+    ) -> Result<AudioFolderInner> {
         self.lister
             .list_all(&self.base_dir)
             .map_err(Error::from)
@@ -85,7 +85,7 @@ impl CollectionTrait for CollectionDirect {
         Ok(dir.files.len())
     }
 
-    fn get_audio_track(&self, track_id: u32) -> Result<AudioFile> {
+    fn get_audio_track(&self, track_id: u32) -> Result<AudioFileInner> {
         Err(Error::NotImplementedForDirectCollection)
     }
 

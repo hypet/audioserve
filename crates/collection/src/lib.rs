@@ -2,8 +2,8 @@
 extern crate log;
 
 pub use audio_folder::{list_dir_files_only, list_dir_files_with_subdirs, parse_chapter_path};
-pub use audio_meta::{AudioFile, AudioFolderShort, FoldersOrdering, TimeSpan};
-use audio_meta::{AudioFolder, TimeStamp};
+pub use audio_meta::{AudioFileInner, AudioFolderShort, FoldersOrdering, TimeSpan};
+use audio_meta::{AudioFolderInner, TimeStamp};
 use cache::CollectionCache;
 use common::{Collection, CollectionTrait, PositionsTrait};
 pub use common::{CollectionOptions, CollectionOptionsMap};
@@ -118,7 +118,7 @@ impl Collections {
         dir_path: P,
         ordering: FoldersOrdering,
         group: Option<String>,
-    ) -> Result<AudioFolder> {
+    ) -> Result<AudioFolderInner> {
         self.get_cache(collection)?
             .list_dir(dir_path, ordering, group)
     }
@@ -126,7 +126,7 @@ impl Collections {
     pub fn list_all(
         &self,
         collection: usize,
-    ) -> Result<AudioFolder> {
+    ) -> Result<AudioFolderInner> {
         self.get_cache(collection)?
             .list_all()
     }
@@ -143,7 +143,7 @@ impl Collections {
         &self,
         collection: usize,
         id: u32,
-    ) -> Result<AudioFile> {
+    ) -> Result<AudioFileInner> {
         self.get_cache(collection)?
             .get_audio_track(id)
     }

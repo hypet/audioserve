@@ -68,7 +68,7 @@ impl FolderLister {
         base_dir: P,
         dir_path: P2,
         ordering: FoldersOrdering,
-    ) -> Result<AudioFolder, io::Error> {
+    ) -> Result<AudioFolderInner, io::Error> {
         let full_path = base_dir.as_ref().join(&dir_path);
         match self.get_dir_type(&full_path)? {
             DirType::Dir => {
@@ -97,7 +97,7 @@ impl FolderLister {
     pub fn list_all<P: AsRef<Path>>(
         &self,
         base_dir: P,
-    ) -> Result<AudioFolder, io::Error> {
+    ) -> Result<AudioFolderInner, io::Error> {
         let full_path = base_dir.as_ref();
         let mut counter: u32 = 0;
         let mut files = vec![];
@@ -112,16 +112,11 @@ impl FolderLister {
                         counter += 1;
                         let mime = guess_mime_type(entry_path);
                         let tags = meta.get_audio_info(&self.config.tags);
-                        let parent_dir = match entry_path.parent() {
-                            Some(parent) => Some(String::from(parent.as_os_str().to_str().unwrap())),
-                            None => None,
-                        };
-                        let af = AudioFile {
+                        let af = AudioFileInner {
                             id: counter,
                             meta: tags,
                             path: entry_path.to_path_buf(),
-                            parent_dir,
-                            name: format!("{}", entry.file_name().to_str().unwrap()).into(),
+                            name: entry.file_name().to_str().unwrap().into(),
                             section: None,
                             mime: mime.to_string(),
                         };
@@ -137,7 +132,7 @@ impl FolderLister {
         }
         info!("Files read: {}", &files.len());
 
-        Ok(AudioFolder {
+        Ok(AudioFolderInner {
             is_file: false,
             is_collapsed: false,
             modified: None,
@@ -251,7 +246,7 @@ impl FolderLister {
         full_path: PathBuf,
         ordering: FoldersOrdering,
         extract_tags: bool,
-    ) -> Result<AudioFolder, io::Error> {
+    ) -> Result<AudioFolderInner, io::Error> {
         match fs::read_dir(&full_path) {
             Ok(dir_iter) => {
                 info!("list_dir_dir");
@@ -309,11 +304,10 @@ impl FolderLister {
                                                     &f, path, true,
                                                 )?)
                                             } else {
-                                                files.push(AudioFile {
+                                                files.push(AudioFileInner {
                                                     id: 0u32,
                                                     meta,
                                                     path,
-                                                    parent_dir: None,
                                                     name: f.file_name().to_string_lossy().into(),
                                                     section: None,
                                                     mime: mime.to_string(),
@@ -375,7 +369,7 @@ impl FolderLister {
 
                 extend_audiofolder(
                     &full_path,
-                    AudioFolder {
+                    AudioFolderInner {
                         is_file,
                         is_collapsed,
                         modified: None,
@@ -406,7 +400,7 @@ impl FolderLister {
         audio_meta: AudioMeta,
         chapters: Vec<Chapter>,
         collapse: bool,
-    ) -> Result<AudioFolder, io::Error> {
+    ) -> Result<AudioFolderInner, io::Error> {
         debug!("list_dir_file");
         let path = full_path.strip_prefix(&base_dir).unwrap();
         let mime = guess_mime_type(&path);
@@ -432,11 +426,10 @@ impl FolderLister {
                         tags: None, // TODO: consider extracting metadata from chapters too - but what will make sense?
                     }
                 };
-                Ok(AudioFile {
+                Ok(AudioFileInner {
                     id: 0u32,
                     meta: Some(new_meta),
                     path: path_for_chapter(path, &chap, collapse)?,
-                    parent_dir: None,
                     name: format!("{:03} - {}", chap.number, chap.title).into(),
                     section: Some(FileSection {
                         start: chap.start,
@@ -449,7 +442,7 @@ impl FolderLister {
 
         extend_audiofolder(
             &full_path,
-            AudioFolder {
+            AudioFolderInner {
                 is_file: true,
                 is_collapsed: false,
                 modified: None,
@@ -463,7 +456,7 @@ impl FolderLister {
     }
 }
 
-fn extract_folder_tags(files: &mut Vec<AudioFile>) -> Option<HashMap<String, String>> {
+fn extract_folder_tags(files: &mut Vec<AudioFileInner>) -> Option<HashMap<String, String>> {
     let mut iter = (files).iter();
     let mut folder_tags = iter
         .next()?
@@ -521,8 +514,8 @@ fn extract_folder_tags(files: &mut Vec<AudioFile>) -> Option<HashMap<String, Str
 
 fn extend_audiofolder<P: AsRef<Path>>(
     full_path: P,
-    mut af: AudioFolder,
-) -> Result<AudioFolder, io::Error> {
+    mut af: AudioFolderInner,
+) -> Result<AudioFolderInner, io::Error> {
     let last_modification = get_modified(full_path);
     let total_time: u32 = af
         .files

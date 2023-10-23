@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
 
-use crate::{AudioFile, AudioFolderShort};
+use crate::{AudioFileInner, AudioFolderShort};
 
 pub(crate) trait Collate<T = Self> {
     fn collate(&self, other: &T) -> Ordering;
@@ -10,8 +10,8 @@ pub(crate) trait Collate<T = Self> {
 pub(crate) mod standard {
     use super::*;
 
-    impl Collate for AudioFile {
-        fn collate(&self, other: &AudioFile) -> Ordering {
+    impl Collate for AudioFileInner {
+        fn collate(&self, other: &AudioFileInner) -> Ordering {
             self.name.cmp(&other.name)
         }
     }
@@ -77,8 +77,8 @@ pub(crate) mod locale {
         }
     }
 
-    impl Collate for AudioFile {
-        fn collate(&self, other: &AudioFile) -> Ordering {
+    impl Collate for AudioFileInner {
+        fn collate(&self, other: &AudioFileInner) -> Ordering {
             LOCALE_COLLATOR.collate(&self.name, &other.name)
         }
     }

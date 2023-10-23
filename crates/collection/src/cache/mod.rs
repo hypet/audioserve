@@ -5,13 +5,13 @@ use self::{
 };
 use crate::{
     audio_folder::FolderLister,
-    audio_meta::{AudioFolder, FolderByModification, TimeStamp},
+    audio_meta::{AudioFolderInner, FolderByModification, TimeStamp, AudioFile},
     cache::update::{filter_event, FilteredEvent},
     common::{CollectionOptions, CollectionTrait, PositionsData, PositionsTrait},
     error::{Error, Result},
     position::{Position, PositionsCollector},
     util::get_modified,
-    AudioFolderShort, FoldersOrdering, AudioFile,
+    AudioFolderShort, FoldersOrdering, AudioFileInner,
 };
 use crossbeam_channel::{unbounded as channel, Receiver, Sender};
 use notify::{watcher, DebouncedEvent, Watcher};
@@ -87,18 +87,29 @@ impl CollectionCache {
 
         let lister = FolderLister::new_with_options(opt.into());
 
-        let track_map: HashMap<u32, AudioFile> = match File::open(&tracklist_file).and_then(|f| {
-            serde_json::from_reader::<_, HashMap<u32, AudioFile>>(f)
+        let track_map: HashMap<u32, AudioFileInner> = match File::open(&tracklist_file).and_then(|f| {
+            serde_json::from_reader::<_, HashMap<u32, AudioFileInner>>(f)
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
         }) {
             Ok(tracklist) => {
+                info!("Loaded {} entries from {:?}", &tracklist.len(), &tracklist_file);
                 tracklist
             }
             Err(e) => {
                 warn!("Cannot read track list on {:?} due to {}, will enforce full cache update", root_path, e);
 
-                let track_map: HashMap<u32, AudioFile> = match lister.list_all(&root_path) {
-                    Ok(af) => af.files.iter().map(|t| (t.id, t.to_owned())).collect(),
+                let track_map: HashMap<u32, AudioFileInner> = match lister.list_all(&root_path) {
+                    Ok(af) => af.files.iter().map(|t| {
+                        let audio_file = AudioFileInner {
+                            id: t.id,
+                            meta: t.meta.clone(),
+                            name: t.name.clone(),
+                            path: t.path.parent().unwrap().to_path_buf(),
+                            mime: t.mime.clone(),
+                            section: None
+                        };
+                        return (t.id, audio_file)
+                    }).collect(),
                     Err(e) => {
                         error!("Failed to build track list at {:?}: {}", &root_path, e);
                         HashMap::new()
@@ -280,7 +291,7 @@ impl CollectionCache {
     }
 
     #[allow(dead_code)]
-    pub fn get<P: AsRef<Path>>(&self, dir: P) -> Option<AudioFolder> {
+    pub fn get<P: AsRef<Path>>(&self, dir: P) -> Option<AudioFolderInner> {
         self.inner.get(dir)
     }
 
@@ -296,7 +307,7 @@ impl CollectionTrait for CollectionCache {
         self.inner.count_tracks()
     }
 
-    fn list_all(&self) -> Result<AudioFolder> {
+    fn list_all(&self) -> Result<AudioFolderInner> {
         let af = self.inner.list_all().unwrap();
         Ok(af)
     }
@@ -306,7 +317,7 @@ impl CollectionTrait for CollectionCache {
         dir_path: P,
         ordering: FoldersOrdering,
         group: Option<String>,
-    ) -> Result<AudioFolder> {
+    ) -> Result<AudioFolderInner> {
         let dir_path = dir_path.as_ref();
         let full_path = self.inner.full_path(dir_path);
         let ts = get_modified(&full_path);
@@ -403,7 +414,7 @@ impl CollectionTrait for CollectionCache {
         self.inner.count_files(dir_path)
     }
 
-    fn get_audio_track(&self, track_id:u32) -> Result<AudioFile> {
+    fn get_audio_track(&self, track_id:u32) -> Result<AudioFileInner> {
         self.inner.get_audio_track(track_id)
     }
 }
