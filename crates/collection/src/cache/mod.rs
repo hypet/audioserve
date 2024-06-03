@@ -5,7 +5,7 @@ use self::{
 };
 use crate::{
     audio_folder::FolderLister,
-    audio_meta::{AudioFolderInner, FolderByModification, TimeStamp, AudioFile},
+    audio_meta::{AudioFolderInner, FolderByModification, TimeStamp},
     cache::update::{filter_event, FilteredEvent},
     common::{CollectionOptions, CollectionTrait, PositionsData, PositionsTrait},
     error::{Error, Result},
@@ -98,32 +98,7 @@ impl CollectionCache {
             Err(e) => {
                 warn!("Cannot read track list on {:?} due to {}, will enforce full cache update", root_path, e);
 
-                let track_map: HashMap<u32, AudioFileInner> = match lister.list_all(&root_path) {
-                    Ok(af) => af.files.iter().map(|t| {
-                        let audio_file = AudioFileInner {
-                            id: t.id,
-                            meta: t.meta.clone(),
-                            name: t.name.clone(),
-                            path: t.path.parent().unwrap().to_path_buf(),
-                            mime: t.mime.clone(),
-                            section: None
-                        };
-                        return (t.id, audio_file)
-                    }).collect(),
-                    Err(e) => {
-                        error!("Failed to build track list at {:?}: {}", &root_path, e);
-                        HashMap::new()
-                    },
-                };
-                match File::create(&tracklist_file) {
-                    Ok(f) => match serde_json::to_writer(f, &track_map) {
-                        Ok(_) => debug!("Created track list file {:?}", tracklist_file),
-                        Err(e) => error!("Cannot create {:?} : {}", tracklist_file, e),
-                    },
-                    Err(e) => error!("Cannot create {:?} : {}", options_file, e),
-                };
-
-                track_map
+                Self::update_tracks_inner(&lister, &root_path, &tracklist_file)
             }
         };
 
@@ -173,6 +148,39 @@ impl CollectionCache {
             .map(|name| name.to_string_lossy() + "_" + name_prefix.as_ref())
             .ok_or(Error::InvalidCollectionPath)?;
         Ok(db_dir.as_ref().join(name.as_ref()))
+    }
+
+    pub(crate) fn update_tracks(lister: &FolderLister, root_path: &PathBuf, tracklist_file: &PathBuf) -> HashMap<u32, AudioFileInner> {
+        Self::update_tracks_inner(lister, root_path, tracklist_file)
+    }
+
+    fn update_tracks_inner(lister: &FolderLister, root_path: &PathBuf, tracklist_file: &PathBuf) -> HashMap<u32, AudioFileInner> {
+        let track_map: HashMap<u32, AudioFileInner> = match lister.list_all(&root_path) {
+            Ok(af) => af.files.iter().map(|t| {
+                let audio_file = AudioFileInner {
+                    id: t.id,
+                    meta: t.meta.clone(),
+                    name: t.name.clone(),
+                    path: t.path.parent().unwrap().to_path_buf(),
+                    mime: t.mime.clone(),
+                    section: None
+                };
+                return (t.id, audio_file)
+            }).collect(),
+            Err(e) => {
+                error!("Failed to build track list at {:?}: {}", &root_path, e);
+                HashMap::new()
+            },
+        };
+        match File::create(&tracklist_file) {
+            Ok(f) => match serde_json::to_writer(f, &track_map) {
+                Ok(_) => debug!("Created track list file {:?}", tracklist_file),
+                Err(e) => error!("Cannot create {:?} : {}", tracklist_file, e),
+            },
+            Err(e) => error!("Cannot create {:?} : {}", tracklist_file, e),
+        };
+
+        track_map
     }
 
     pub(crate) fn restore_positions<P1: Into<PathBuf>, P2: AsRef<Path>>(
@@ -253,7 +261,7 @@ impl CollectionCache {
                 loop {
                     match rx.recv() {
                         Ok(event) => {
-                            trace!("Change in collection {:?} => {:?}", root_path, event);
+                            debug!("Change in collection {:?} => {:?}", root_path, event);
                             let interesting_event = match filter_event(event) {
                                 FilteredEvent::Ignore => continue,
                                 FilteredEvent::Pass(evt) => evt,

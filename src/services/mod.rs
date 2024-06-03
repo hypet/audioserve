@@ -839,13 +839,19 @@ impl<C: 'static> FileSendService<C> {
 
             None => None,
         };
+
         let track_id: Option<u32> = get_subpath(path, "/media/").to_str().and_then(|s| s.parse().ok());
-        match collections.get_audio_track(collection_index, track_id.unwrap()) {
-            Ok(af) => send_file(base_dir, af.path.join(Path::new(af.name.as_str())), bytes_range, None),
-            Err(e) => {
-                error!("Error while retrieving track {:?} info, {}", track_id, e);
-                resp::fut(resp::not_found)
-            }
+        match track_id {
+            Some(track_id) => {
+                match collections.get_audio_track(collection_index, track_id) {
+                    Ok(af) => send_file(base_dir, af.path.join(Path::new(af.name.as_str())), bytes_range, None),
+                    Err(e) => {
+                        error!("Error while retrieving track {:?} info, {}", track_id, e);
+                        resp::fut(resp::not_found)
+                    }
+                }
+            },
+            None => resp::fut(resp::not_found)
         }
     }
 }
@@ -879,7 +885,7 @@ async fn handle_connection(
     let broadcast_incoming = incoming.try_for_each(|msg| {
         match msg {
             Message::Text(string) => {
-                debug!("Received a message from {}: {}", addr, string);
+                trace!("Received a message from {}: {}", addr, string);
                 process_message(string, collections.clone(), devices.clone(), addr);
             }
             Message::Binary(_) => {

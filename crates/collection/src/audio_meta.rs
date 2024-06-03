@@ -96,6 +96,7 @@ pub struct AudioFile {
     #[serde(with = "unicase_serde::unicase")]
     pub name: UniCase<String>,
     pub parent_dir: Option<String>,
+    pub root_subfolder: Option<String>,
     pub meta: Option<AudioMeta>,
     pub mime: String,
 }
@@ -108,6 +109,7 @@ pub struct AudioFolderInner {
     pub modified: Option<TimeStamp>, // last modification time of this folder
     pub total_time: Option<u32>,     // total playback time of contained audio files
     pub files: Vec<AudioFileInner>,
+    pub subfolders: Vec<AudioFolderShort>,
     pub cover: Option<TypedFile>, // cover is file in folder - either jpg or png
     pub description: Option<TypedFile>, // description is file in folder - either txt, html, md
     pub tags: Option<HashMap<String, String>>, // metadata tags, which are applicable for whole folder

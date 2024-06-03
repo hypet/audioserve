@@ -45,7 +45,6 @@ pub(crate) struct CacheInner {
 impl CacheInner {
     pub(crate) fn new(
         db: Db,
-
         lister: FolderLister,
         base_dir: PathBuf,
         update_sender: Sender<Option<UpdateAction>>,
@@ -90,6 +89,7 @@ impl CacheInner {
             modified: Some(TimeStamp::now()),
             total_time: Some(100),
             files: files,
+            subfolders: Vec::new(),
             cover: None,
             description: None,
             tags: None,
@@ -689,7 +689,9 @@ impl CacheInner {
     }
 
     pub(crate) fn proceed_update(&self, update: UpdateAction) {
+
         debug!("Update action: {:?}", update);
+
         match update {
             UpdateAction::RefreshFolder(folder) => {
                 self.force_update(&folder, false)

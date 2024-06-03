@@ -227,6 +227,7 @@ pub fn get_all(
                             id: afi.id,
                             name: afi.name.clone(),
                             parent_dir: pathbuf_to_str(&afi.path),
+                            root_subfolder: path_to_subfolder(&afi.path),
                             meta: afi.meta.clone(),
                             mime: afi.mime.clone()
                         }).collect(),
@@ -240,6 +241,20 @@ pub fn get_all(
             })
             .map_err(Error::new),
     )
+}
+
+fn path_to_subfolder(path_buf: &PathBuf) -> Option<String> {
+    match path_buf.components().next() {
+        Some(first_component_from_base_dir) => {
+            match first_component_from_base_dir {
+                std::path::Component::Normal(normal) => {
+                    Some(normal.to_str().unwrap().into())
+                },
+                _ => Option::None,
+            }
+        },
+        None => Option::None,
+    }
 }
 
 fn pathbuf_to_str(path_buf: &PathBuf) -> Option<String> {

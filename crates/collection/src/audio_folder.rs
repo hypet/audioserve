@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::{io, vec};
 use std::path::{Path, PathBuf};
-use std::{fs, mem};
+use std::{fs};
 
 use super::audio_meta::*;
 use crate::collator::Collate;
@@ -106,6 +106,7 @@ impl FolderLister {
             let entry = entry.unwrap();
             let entry_path: &Path = entry.path().strip_prefix(base_dir.as_ref()).unwrap();
             if entry.path().is_file() {
+                
                 let audio_info = get_audio_properties(&entry.path());
                 match audio_info {
                     Ok(meta) => {
@@ -138,6 +139,7 @@ impl FolderLister {
             modified: None,
             total_time: None,
             files,
+            subfolders: Vec::new(),
             cover: None,
             description: None,
             tags: None,
@@ -249,7 +251,6 @@ impl FolderLister {
     ) -> Result<AudioFolderInner, io::Error> {
         match fs::read_dir(&full_path) {
             Ok(dir_iter) => {
-                info!("list_dir_dir");
                 let mut files = vec![];
                 let mut subfolders = vec![];
                 let mut cover = None;
@@ -375,6 +376,7 @@ impl FolderLister {
                         modified: None,
                         total_time: None,
                         files,
+                        subfolders,
                         cover,
                         description,
                         tags,
@@ -401,7 +403,6 @@ impl FolderLister {
         chapters: Vec<Chapter>,
         collapse: bool,
     ) -> Result<AudioFolderInner, io::Error> {
-        debug!("list_dir_file");
         let path = full_path.strip_prefix(&base_dir).unwrap();
         let mime = guess_mime_type(&path);
         let mut tags = None;
@@ -448,6 +449,7 @@ impl FolderLister {
                 modified: None,
                 total_time: None,
                 files,
+                subfolders: Vec::new(),
                 cover: None,
                 description: None,
                 tags,
