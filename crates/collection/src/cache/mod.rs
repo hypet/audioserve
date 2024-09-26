@@ -4,21 +4,16 @@ use self::{
     util::kv_to_audiofolder,
 };
 use crate::{
-    audio_folder::FolderLister,
-    audio_meta::{AudioFolderInner, FolderByModification, TimeStamp},
-    cache::update::{filter_event, FilteredEvent},
-    common::{CollectionOptions, CollectionTrait, PositionsData, PositionsTrait},
-    error::{Error, Result},
-    position::{Position, PositionsCollector},
-    util::get_modified,
-    AudioFolderShort, FoldersOrdering, AudioFileInner,
+    audio_folder::FolderLister, audio_meta::{self, AudioFolderInner, FolderByModification, TimeStamp}, cache::update::{filter_event, FilteredEvent}, common::{CollectionOptions, CollectionTrait, PositionsData, PositionsTrait}, error::{Error, Result}, position::{Position, PositionsCollector}, util::get_modified, AudioFileInner, AudioFolderShort, FoldersOrdering
 };
 use crossbeam_channel::{unbounded as channel, Receiver, Sender};
+use inner::SearchEngine;
 use notify::{watcher, DebouncedEvent, Watcher};
+use tantivy::{collector::TopDocs, query::QueryParser, schema::{Schema, STORED, TEXT}, Document, Index, IndexWriter, ReloadPolicy, Searcher, TantivyDocument};
 use std::{
     collections::{BinaryHeap, HashMap},
     convert::TryInto,
-    fs::File,
+    fs::{DirBuilder, File},
     io,
     path::{Path, PathBuf},
     sync::{Arc, Condvar, Mutex},
@@ -102,9 +97,68 @@ impl CollectionCache {
             }
         };
 
+        // Trying to quickly add search engine
+        // TODO: move to method
+        let mut schema_builder = Schema::builder();
+        schema_builder.add_text_field("title", TEXT | STORED);
+        schema_builder.add_text_field("tags", TEXT | STORED);
+        let schema = schema_builder.build();
+
+        let mut search_db_path = root_path.clone();
+        search_db_path.push("search");
+        match DirBuilder::new().create(search_db_path.clone()) {
+            Ok(_) => {},
+            Err(e) => panic!("Could not create search dir {:?}: {}", search_db_path.clone(), e),
+        };
+
+        let search_engine: Option<SearchEngine> = match Index::create_in_dir(&search_db_path, schema.clone()) {
+            Ok(idx) => {
+                let mut index_writer: IndexWriter = idx.writer(50_000_000).unwrap();
+                let title = schema.get_field("title").unwrap();
+                let tags = schema.get_field("tags").unwrap();
+                track_map.iter().for_each(|(_, track)| {
+                    let mut doc = TantivyDocument::default();
+                    doc.add_text(title, track.name.as_str());
+                    let meta = track.meta.as_ref();
+                    meta.map(|audio_meta| {
+                        if let Some(file_tags) = audio_meta.tags.as_ref() {
+                            for (_, v) in file_tags {
+                                doc.add_text(tags, v);
+                            }
+                        }
+                    });
+                    let _ = index_writer.add_document(doc);
+                });
+                let _ = index_writer.commit();
+
+                let reader = idx.reader_builder()
+                    .reload_policy(ReloadPolicy::OnCommitWithDelay)
+                    .try_into().unwrap();
+                let searcher = reader.searcher();
+                Some(SearchEngine { fields: vec![title, tags], index: idx, reader: reader, searcher: searcher})
+            },
+            Err(e) => {
+                error!("Could create index in dir: {:?}, {}", &search_db_path, e);
+                None
+            },
+        };
+
+        // Test search after start, to be removed
+        search_engine.clone().map(|s| {
+            let query_parser = QueryParser::for_index(&s.index, s.fields);
+            let query = query_parser.parse_query("abc").unwrap();
+            let searcher = &s.searcher;
+            let result = searcher.search(&query, &TopDocs::with_limit(10));
+
+            for (_score, doc_address) in result.unwrap() {
+                let retrieved_doc: TantivyDocument = searcher.doc(doc_address).unwrap();
+                println!("{}", retrieved_doc.to_json(&schema));
+            }
+        });
+
         let db = sled::Config::default()
             .path(&db_path)
-            .use_compression(true)
+            // .use_compression(true)
             .flush_every_ms(Some(10_000))
             .cache_capacity(100 * 1024 * 1024)
             .open()?;
@@ -117,7 +171,8 @@ impl CollectionCache {
                 lister,
                 root_path,
                 update_sender.clone(),
-                tracks
+                tracks,
+                search_engine,
             )?),
             thread_loop: None,
             watcher_sender: Arc::new(Mutex::new(None)),
@@ -340,7 +395,7 @@ impl CollectionTrait for CollectionCache {
                     Ok(af_ref) => {
                         // We should update cache as we got new info
                         debug!("Updating cache for dir {:?}", full_path);
-                        let mut af = af_ref.clone();
+                        let af = af_ref.clone();
                         self.inner
                             .update(dir_path, af)
                             .map_err(|e| error!("Cannot update collection: {}", e))

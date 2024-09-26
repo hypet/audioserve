@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, SystemTime},
@@ -7,8 +7,6 @@ use std::{
 
 use crossbeam_channel::{Receiver, RecvTimeoutError};
 use notify::DebouncedEvent;
-
-use crate::{util::get_modified, AudioFolderShort};
 
 use super::CacheInner;
 

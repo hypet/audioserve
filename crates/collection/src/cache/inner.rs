@@ -1,8 +1,5 @@
 use std::{
-    collections::HashMap,
-    ops::Deref,
-    path::{Path, PathBuf},
-    time::SystemTime, sync::{Arc, Mutex},
+    collections::HashMap, ops::Deref, path::{Path, PathBuf}, sync::{Arc, Mutex, RwLock}, time::SystemTime
 };
 
 use crossbeam_channel::Sender;
@@ -12,6 +9,7 @@ use sled::{
     transaction::{self, TransactionError, Transactional},
     Batch, Db, IVec, Tree,
 };
+use tantivy::{schema::Field, Index, IndexReader, Searcher};
 
 use crate::{
     audio_folder::{DirType, FolderLister},
@@ -32,6 +30,14 @@ use super::{
 };
 
 #[derive(Clone)]
+pub(crate) struct SearchEngine {
+    pub fields: Vec<Field>,
+    pub index: Index,
+    pub reader: IndexReader,
+    pub searcher: Searcher,
+}
+
+#[derive(Clone)]
 pub(crate) struct CacheInner {
     db: Db,
     pos_latest: Tree,
@@ -40,6 +46,7 @@ pub(crate) struct CacheInner {
     base_dir: PathBuf,
     update_sender: Sender<Option<UpdateAction>>,
     tracks: Arc<Mutex<HashMap<u32, AudioFileInner>>>,
+    search: Option<SearchEngine>,
 }
 
 impl CacheInner {
@@ -49,6 +56,7 @@ impl CacheInner {
         base_dir: PathBuf,
         update_sender: Sender<Option<UpdateAction>>,
         tracks: Arc<Mutex<HashMap<u32, AudioFileInner>>>,
+        search: Option<SearchEngine>,
     ) -> Result<Self> {
         let pos_latest = db.open_tree("pos_latest")?;
         let pos_folder = db.open_tree("pos_folder")?;
@@ -60,6 +68,7 @@ impl CacheInner {
             base_dir,
             update_sender,
             tracks,
+            search,
         })
     }
 }

@@ -484,14 +484,14 @@ where
         };
     }
 
-    if args.is_present("no-authentication") {
+    // if args.is_present("no-authentication") {
         config.shared_secret = None;
-        no_authentication_confirmed = true
-    } else if let Some(secret) = args.value_of("shared-secret") {
-        config.shared_secret = Some(secret.into())
-    } else if let Some(file) = args.value_of_os("shared-secret-file") {
-        config.set_shared_secret_from_file(file)?
-    };
+        no_authentication_confirmed = true;
+    // } else if let Some(secret) = args.value_of("shared-secret") {
+    //     config.shared_secret = Some(secret.into())
+    // } else if let Some(file) = args.value_of_os("shared-secret-file") {
+    //     config.set_shared_secret_from_file(file)?
+    // };
 
     if let Some(r) = args.value_of("limit-rate").and_then(|s| s.parse().ok()) {
         config.limit_rate = Some(r)
