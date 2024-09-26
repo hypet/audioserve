@@ -2,7 +2,8 @@
 name = "cachedirtree"
 version = "0.2.1"
 authors = ["Ivan <ivan.zderadicka@gmail.com>"]
-
+edition = "2021"
+ 
 [dependencies]
 ego-tree="0.6"
 bit-vec = "0.6"
