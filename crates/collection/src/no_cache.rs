@@ -92,6 +92,11 @@ impl CollectionTrait for CollectionDirect {
     fn count_tracks(&self) -> Result<u32> {
         Err(Error::NotImplementedForDirectCollection)
     }
+
+    fn increase_played_times(&self, track_id: u32) {
+        error!("increase_played_times is not implemented for CollectionDirect")
+    }
+
 }
 
 impl PositionsTrait for CollectionDirect {

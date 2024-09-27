@@ -144,8 +144,7 @@ impl Collections {
         collection: usize,
         id: u32,
     ) -> Result<AudioFileInner> {
-        self.get_cache(collection)?
-            .get_audio_track(id)
+        self.get_cache(collection)?.get_audio_track(id)
     }
 
     pub fn count_files_in_dir<P: AsRef<Path>>(&self, collection: usize, dir_path: P) -> Result<usize> {
@@ -182,6 +181,11 @@ impl Collections {
     ) -> Result<Vec<AudioFolderShort>> {
         self.get_cache(collection)
             .map(|cache| cache.recent(limit, group))
+    }
+
+    pub fn increase_played_times_for_track(&self, collection: usize, id: u32) {
+        let _ = self.get_cache(collection)
+            .map(|cache| cache.increase_played_times(id));
     }
 }
 

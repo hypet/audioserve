@@ -9,7 +9,7 @@ use sled::{
     transaction::{self, TransactionError, Transactional},
     Batch, Db, IVec, Tree,
 };
-use tantivy::{schema::Field, Index, IndexReader, Searcher};
+use tantivy::{schema::{Field, Schema}, Index, IndexReader, Searcher};
 
 use crate::{
     audio_folder::{DirType, FolderLister},
@@ -32,6 +32,7 @@ use super::{
 #[derive(Clone)]
 pub(crate) struct SearchEngine {
     pub fields: Vec<Field>,
+    pub schema: Schema,
     pub index: Index,
     pub reader: IndexReader,
     pub searcher: Searcher,
@@ -45,7 +46,7 @@ pub(crate) struct CacheInner {
     lister: FolderLister,
     base_dir: PathBuf,
     update_sender: Sender<Option<UpdateAction>>,
-    tracks: Arc<Mutex<HashMap<u32, AudioFileInner>>>,
+    tracks: Arc<RwLock<HashMap<u32, AudioFileInner>>>,
     search: Option<SearchEngine>,
 }
 
@@ -55,7 +56,7 @@ impl CacheInner {
         lister: FolderLister,
         base_dir: PathBuf,
         update_sender: Sender<Option<UpdateAction>>,
-        tracks: Arc<Mutex<HashMap<u32, AudioFileInner>>>,
+        tracks: Arc<RwLock<HashMap<u32, AudioFileInner>>>,
         search: Option<SearchEngine>,
     ) -> Result<Self> {
         let pos_latest = db.open_tree("pos_latest")?;
@@ -90,7 +91,7 @@ impl CacheInner {
     }
 
     pub(crate) fn list_all(&self) -> Result<AudioFolderInner> {
-        let map = self.tracks.lock().unwrap();
+        let map = self.tracks.read().unwrap();
         let files: Vec<AudioFileInner> = map.values().map(|f| f.to_owned()).collect();
         let af = AudioFolderInner {
             is_file: false,
@@ -136,17 +137,22 @@ impl CacheInner {
     }
 
     pub(crate) fn get_audio_track(&self, track_id: u32) -> Result<AudioFileInner> {
-        let map = self.tracks.lock().unwrap();
+        let map = self.tracks.read().unwrap();
         map.get(&track_id)
             .map(|track| track.clone())
             .ok_or(Error::TrackNotFound(track_id))
     }
 
     pub(crate) fn count_tracks(&self) -> Result<u32> {
-        let map = self.tracks.lock().unwrap();
+        let map = self.tracks.read().unwrap();
         Ok(map.len() as u32)
     }
 
+    pub(crate) fn increase_played_times(&self, track_id: u32) {
+        let mut map = self.tracks.write().unwrap();
+        map.get_mut(&track_id)
+            .map(|track| track.increase_played_times());
+    }
 }
 
 impl CacheInner {

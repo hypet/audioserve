@@ -425,6 +425,7 @@ impl FolderLister {
                         bitrate: audio_meta.bitrate,
                         duration: ((chap.end - chap.start) / 1000) as u32,
                         tags: None, // TODO: consider extracting metadata from chapters too - but what will make sense?
+                        played_times: 0,
                     }
                 };
                 Ok(AudioFileInner {

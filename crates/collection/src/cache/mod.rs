@@ -16,7 +16,7 @@ use std::{
     fs::{DirBuilder, File},
     io,
     path::{Path, PathBuf},
-    sync::{Arc, Condvar, Mutex},
+    sync::{Arc, Condvar, Mutex, RwLock},
     thread,
     time::Duration,
 };
@@ -97,51 +97,11 @@ impl CollectionCache {
             }
         };
 
-        // Trying to quickly add search engine
-        // TODO: move to method
-        let mut schema_builder = Schema::builder();
-        schema_builder.add_text_field("title", TEXT | STORED);
-        schema_builder.add_text_field("tags", TEXT | STORED);
-        let schema = schema_builder.build();
-
-        let mut search_db_path = root_path.clone();
+        let mut search_db_path = db_dir.as_ref().to_path_buf();
         search_db_path.push("search");
-        match DirBuilder::new().create(search_db_path.clone()) {
-            Ok(_) => {},
-            Err(e) => panic!("Could not create search dir {:?}: {}", search_db_path.clone(), e),
-        };
+        let _ = DirBuilder::new().create(search_db_path.clone());
 
-        let search_engine: Option<SearchEngine> = match Index::create_in_dir(&search_db_path, schema.clone()) {
-            Ok(idx) => {
-                let mut index_writer: IndexWriter = idx.writer(50_000_000).unwrap();
-                let title = schema.get_field("title").unwrap();
-                let tags = schema.get_field("tags").unwrap();
-                track_map.iter().for_each(|(_, track)| {
-                    let mut doc = TantivyDocument::default();
-                    doc.add_text(title, track.name.as_str());
-                    let meta = track.meta.as_ref();
-                    meta.map(|audio_meta| {
-                        if let Some(file_tags) = audio_meta.tags.as_ref() {
-                            for (_, v) in file_tags {
-                                doc.add_text(tags, v);
-                            }
-                        }
-                    });
-                    let _ = index_writer.add_document(doc);
-                });
-                let _ = index_writer.commit();
-
-                let reader = idx.reader_builder()
-                    .reload_policy(ReloadPolicy::OnCommitWithDelay)
-                    .try_into().unwrap();
-                let searcher = reader.searcher();
-                Some(SearchEngine { fields: vec![title, tags], index: idx, reader: reader, searcher: searcher})
-            },
-            Err(e) => {
-                error!("Could create index in dir: {:?}, {}", &search_db_path, e);
-                None
-            },
-        };
+        let search_engine: Option<SearchEngine> = Self::init_search_engine(&search_db_path, &track_map);
 
         // Test search after start, to be removed
         search_engine.clone().map(|s| {
@@ -152,7 +112,7 @@ impl CollectionCache {
 
             for (_score, doc_address) in result.unwrap() {
                 let retrieved_doc: TantivyDocument = searcher.doc(doc_address).unwrap();
-                println!("{}", retrieved_doc.to_json(&schema));
+                println!("{}", retrieved_doc.to_json(&s.schema));
             }
         });
 
@@ -164,7 +124,7 @@ impl CollectionCache {
             .open()?;
         let (update_sender, update_receiver) = channel::<Option<UpdateAction>>();
 
-        let tracks = Arc::new(Mutex::from(track_map));
+        let tracks = Arc::new(RwLock::from(track_map));
         Ok(CollectionCache {
             inner: Arc::new(CacheInner::new(
                 db,
@@ -187,6 +147,50 @@ impl CollectionCache {
             update_sender,
             update_receiver: Some(update_receiver),
             force_update,
+        })
+    }
+
+    fn init_search_engine(search_db_path: &PathBuf, track_map: &HashMap<u32, AudioFileInner>) -> Option<SearchEngine> {
+        let mut schema_builder = Schema::builder();
+        schema_builder.add_text_field("title", TEXT | STORED);
+        schema_builder.add_text_field("tags", TEXT | STORED);
+        let schema = schema_builder.build();
+
+        let index = match Index::open_in_dir(search_db_path) {
+            Ok(idx) => idx,
+            Err(_) => match Index::create_in_dir(&search_db_path, schema.clone()) {
+                Ok(idx) => idx,
+                Err(e) => panic!("Could not create search index in dir: {}", e),
+            },
+        };
+        let mut index_writer: IndexWriter = index.writer(50_000_000).unwrap();
+        let title = schema.get_field("title").unwrap();
+        let tags = schema.get_field("tags").unwrap();
+        track_map.iter().for_each(|(_, track)| {
+            let mut doc = TantivyDocument::default();
+            doc.add_text(title, track.name.as_str());
+            let meta = track.meta.as_ref();
+            meta.map(|audio_meta| {
+                if let Some(file_tags) = audio_meta.tags.as_ref() {
+                    for (_, v) in file_tags {
+                        doc.add_text(tags, v);
+                    }
+                }
+            });
+            let _ = index_writer.add_document(doc);
+        });
+        let _ = index_writer.commit();
+
+        let reader = index.reader_builder()
+            .reload_policy(ReloadPolicy::OnCommitWithDelay)
+            .try_into().unwrap();
+        let searcher = reader.searcher();
+        Some(SearchEngine { 
+            fields: vec![title, tags], 
+            schema: schema,
+            index: index, 
+            reader: reader, 
+            searcher: searcher
         })
     }
 
@@ -218,7 +222,7 @@ impl CollectionCache {
                     name: t.name.clone(),
                     path: t.path.parent().unwrap().to_path_buf(),
                     mime: t.mime.clone(),
-                    section: None
+                    section: None,
                 };
                 return (t.id, audio_file)
             }).collect(),
@@ -244,7 +248,6 @@ impl CollectionCache {
         opt: CollectionOptions,
         backup_data: PositionsData,
     ) -> Result<thread::JoinHandle<()>> {
-        let force_update = opt.force_cache_update_on_init;
         let col = CollectionCache::new(path, db_dir, opt)?;
         let inner = col.inner.clone();
         let thread = thread::spawn(move || {
@@ -480,6 +483,11 @@ impl CollectionTrait for CollectionCache {
     fn get_audio_track(&self, track_id:u32) -> Result<AudioFileInner> {
         self.inner.get_audio_track(track_id)
     }
+
+    fn increase_played_times(&self, track_id: u32) {
+        self.inner.increase_played_times(track_id)
+    }
+
 }
 
 impl Drop for CollectionCache {

@@ -1,6 +1,5 @@
 use crate::collator::Collate;
 use crate::error::{Error, Result};
-use crate::position::PositionShort;
 use crate::util::{get_file_name, get_modified, guess_mime_type};
 use mime_guess::Mime;
 use serde_derive::{Deserialize, Serialize};
@@ -148,6 +147,19 @@ pub struct AudioMeta {
     pub duration: u32, // duration in seconds, if available
     pub bitrate: u32,  // bitrate in kB/s
     pub tags: Option<HashMap<String, String>>,
+    pub played_times: u32,
+}
+
+impl AudioMeta {
+    pub fn increase_played_times(&mut self) {
+        self.played_times += 1;
+    }
+}
+
+impl AudioFileInner {
+    pub fn increase_played_times(&mut self) {
+        self.meta.as_mut().map(|meta| meta.increase_played_times());
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -319,6 +331,7 @@ mod libavformat {
                 duration: (self.media_file.duration() as f32 / 1000.0).round() as u32,
                 bitrate: self.media_file.bitrate(),
                 tags: self.collect_tags(required_tags),
+                played_times: 0,
             })
         }
 

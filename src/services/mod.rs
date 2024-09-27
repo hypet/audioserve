@@ -819,8 +819,8 @@ impl<C: 'static> FileSendService<C> {
         collection_index: usize,
     ) -> ResponseFuture {
         debug!(
-            "serve_media: Received request {} with headers {:?}",
-            req.path, req.headers()
+            "serve_media: Received request {}",
+            req.path
         );
         let range = req.headers().typed_get::<Range>();
 
@@ -1018,6 +1018,9 @@ fn process_message(msg: String, collections: Arc<Collections>, devices: Arc<Devi
             MsgIn::PlayTrack { collection, track_id } => {
                 debug!("PlayTrack: {} {}", collection, track_id);
                 let play_track = MsgOut::PlayTrackEvent { collection, track_id };
+                let collections = collections.clone();
+                collections.increase_played_times_for_track(collection, track_id);
+
                 send_to_all_devices_excluding(play_track, devices.clone(), Some(addr))
             }
             // Currently the client side decides what track to play and in what order. To be removed.

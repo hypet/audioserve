@@ -288,6 +288,11 @@ pub(crate) trait CollectionTrait {
     fn signal_rescan(&self);
 
     fn base_dir(&self) -> &Path;
+
+    fn increase_played_times(
+        &self,
+        track_id: u32,
+    );
 }
 
 #[cfg(test)]
