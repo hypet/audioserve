@@ -9,7 +9,8 @@ use crate::{
 use crossbeam_channel::{unbounded as channel, Receiver, Sender};
 use inner::SearchEngine;
 use notify::{watcher, DebouncedEvent, Watcher};
-use tantivy::{collector::TopDocs, query::QueryParser, schema::{Schema, STORED, TEXT}, Document, Index, IndexWriter, ReloadPolicy, Searcher, TantivyDocument};
+use tantivy::{collector::TopDocs, query::QueryParser, schema::{Schema, INDEXED, STORED, TEXT}, Document, Index, IndexWriter, ReloadPolicy, Searcher, TantivyDocument};
+use tokio::fs::read;
 use std::{
     collections::{BinaryHeap, HashMap},
     convert::TryInto,
@@ -103,19 +104,6 @@ impl CollectionCache {
 
         let search_engine: Option<SearchEngine> = Self::init_search_engine(&search_db_path, &track_map);
 
-        // Test search after start, to be removed
-        search_engine.clone().map(|s| {
-            let query_parser = QueryParser::for_index(&s.index, s.fields);
-            let query = query_parser.parse_query("abc").unwrap();
-            let searcher = &s.searcher;
-            let result = searcher.search(&query, &TopDocs::with_limit(10));
-
-            for (_score, doc_address) in result.unwrap() {
-                let retrieved_doc: TantivyDocument = searcher.doc(doc_address).unwrap();
-                println!("{}", retrieved_doc.to_json(&s.schema));
-            }
-        });
-
         let db = sled::Config::default()
             .path(&db_path)
             // .use_compression(true)
@@ -152,44 +140,53 @@ impl CollectionCache {
 
     fn init_search_engine(search_db_path: &PathBuf, track_map: &HashMap<u32, AudioFileInner>) -> Option<SearchEngine> {
         let mut schema_builder = Schema::builder();
+        schema_builder.add_u64_field("id", INDEXED | STORED);
         schema_builder.add_text_field("title", TEXT | STORED);
         schema_builder.add_text_field("tags", TEXT | STORED);
+
         let schema = schema_builder.build();
+        let id = schema.get_field("id").unwrap();
+        let title = schema.get_field("title").unwrap();
+        let tags = schema.get_field("tags").unwrap();
 
         let index = match Index::open_in_dir(search_db_path) {
             Ok(idx) => idx,
             Err(_) => match Index::create_in_dir(&search_db_path, schema.clone()) {
-                Ok(idx) => idx,
+                Ok(idx) => {
+                    let mut index_writer: IndexWriter = idx.writer(50_000_000).unwrap();
+
+                    track_map.iter().for_each(|(_, track)| {
+                        let mut doc = TantivyDocument::default();
+                        doc.add_u64(id, track.id as u64);
+                        doc.add_text(title, track.name.as_str());
+                        let meta = track.meta.as_ref();
+                        meta.map(|audio_meta| {
+                            if let Some(file_tags) = audio_meta.tags.as_ref() {
+                                for (_, v) in file_tags {
+                                    doc.add_text(tags, v);
+                                }
+                            }
+                        });
+                        let _ = index_writer.add_document(doc);
+                    });
+                    let _ = index_writer.commit();
+
+                    idx
+                },
                 Err(e) => panic!("Could not create search index in dir: {}", e),
             },
         };
-        let mut index_writer: IndexWriter = index.writer(50_000_000).unwrap();
-        let title = schema.get_field("title").unwrap();
-        let tags = schema.get_field("tags").unwrap();
-        track_map.iter().for_each(|(_, track)| {
-            let mut doc = TantivyDocument::default();
-            doc.add_text(title, track.name.as_str());
-            let meta = track.meta.as_ref();
-            meta.map(|audio_meta| {
-                if let Some(file_tags) = audio_meta.tags.as_ref() {
-                    for (_, v) in file_tags {
-                        doc.add_text(tags, v);
-                    }
-                }
-            });
-            let _ = index_writer.add_document(doc);
-        });
-        let _ = index_writer.commit();
 
         let reader = index.reader_builder()
             .reload_policy(ReloadPolicy::OnCommitWithDelay)
             .try_into().unwrap();
         let searcher = reader.searcher();
+        debug!("Search engine initialized");
         Some(SearchEngine { 
-            fields: vec![title, tags], 
+            search_fields: vec![title, tags], 
+            id_field: id,
             schema: schema,
             index: index, 
-            reader: reader, 
             searcher: searcher
         })
     }
@@ -418,22 +415,8 @@ impl CollectionTrait for CollectionCache {
         self.inner.flush()
     }
 
-    fn search<S: AsRef<str>>(&self, q: S, group: Option<String>) -> Vec<AudioFolderShort> {
-        let tokens: Vec<String> = q
-            .as_ref()
-            .split_whitespace()
-            .filter(|s| !s.is_empty())
-            .map(str::to_lowercase)
-            .collect();
-        let iter = self.inner.iter_folders();
-        let search = Search {
-            tokens,
-            iter,
-            prev_match: None,
-            group,
-            inner: self.inner.clone(),
-        };
-        search.collect()
+    fn search<S: AsRef<str>>(&self, q: S, group: Option<String>) -> Result<AudioFolderInner> {
+        self.inner.search_collection(q)
     }
 
     fn recent(&self, limit: usize, group: Option<String>) -> Vec<AudioFolderShort> {
@@ -748,17 +731,16 @@ mod tests {
     fn test_search() {
         env_logger::try_init().ok();
         let (col, _tmp_dir) = create_tmp_collection();
-        let res: Vec<_> = col.search("usak kulisak", None);
-        assert_eq!(1, res.len());
-        let af = &res[0];
+        let res: Result<_> = col.search("usak kulisak", None);
+        let files = res.unwrap().files;
+        assert_eq!(1, files.len());
+        let af = &files[0];
         assert_eq!("kulisak", af.name.as_str());
         let corr_path = Path::new("usak").join("kulisak");
         assert_eq!(corr_path, af.path);
-        assert!(af.modified.is_some());
-        assert!(!af.is_file);
 
-        let res: Vec<_> = col.search("neneneexistuje", None);
-        assert_eq!(0, res.len());
+        let res: Result<_> = col.search("neneneexistuje", None);
+        assert_eq!(0, res.unwrap().files.len());
     }
 
     #[test]

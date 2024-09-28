@@ -2,7 +2,6 @@ use crate::{
     audio_meta::{AudioFolderInner, TimeStamp},
     cache::CollectionCache,
     error::{invalid_option, invalid_option_err, Error, Result},
-    no_cache::CollectionDirect,
     position::PositionsCollector,
     AudioFolderShort, FoldersOrdering, Position, AudioFileInner,
 };
@@ -203,7 +202,6 @@ impl CollectionOptionsMap {
 #[enum_dispatch(CollectionTrait, PositionsTrait)]
 pub(crate) enum Collection {
     CollectionCache,
-    CollectionDirect,
 }
 
 #[enum_dispatch]
@@ -281,7 +279,7 @@ pub(crate) trait CollectionTrait {
 
     fn flush(&self) -> Result<()>;
 
-    fn search<S: AsRef<str>>(&self, q: S, group: Option<String>) -> Vec<AudioFolderShort>;
+    fn search<S: AsRef<str>>(&self, q: S, group: Option<String>) -> Result<AudioFolderInner>;
 
     fn recent(&self, limit: usize, group: Option<String>) -> Vec<AudioFolderShort>;
 

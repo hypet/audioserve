@@ -705,6 +705,7 @@ impl<C: 'static> FileSendService<C> {
                     } else if path == "/search" {
                         if let Some(search_string) = params.get_string("q") {
                             let group = params.get_string("group");
+                            
                             search(collection_index, searcher, search_string, ord, group)
                         } else {
                             error!("q parameter is missing in search");

@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap, ops::Deref, path::{Path, PathBuf}, sync::{Arc, Mutex, RwLock}, time::SystemTime
+    collections::HashMap, ops::Deref, path::{Path, PathBuf}, sync::{Arc, RwLock}, time::SystemTime, vec
 };
 
 use crossbeam_channel::Sender;
@@ -9,18 +9,16 @@ use sled::{
     transaction::{self, TransactionError, Transactional},
     Batch, Db, IVec, Tree,
 };
-use tantivy::{schema::{Field, Schema}, Index, IndexReader, Searcher};
+use tantivy::{collector::TopDocs, query::QueryParser, schema::{Field, OwnedValue, Schema}, Document, Index, IndexReader, Searcher, TantivyDocument};
 
 use crate::{
     audio_folder::{DirType, FolderLister},
     audio_meta::{AudioFolderInner, TimeStamp},
-    cache::{
-        util::{split_path, update_path},
-    },
+    cache::util::{split_path, update_path},
     common::PositionsData,
     error::{Error, Result},
     position::{PositionItem, PositionRecord, PositionsCollector, MAX_GROUPS},
-    util::{get_file_name, get_modified},
+    util::get_modified,
     AudioFolderShort, FoldersOrdering, Position, AudioFileInner,
 };
 
@@ -31,10 +29,10 @@ use super::{
 
 #[derive(Clone)]
 pub(crate) struct SearchEngine {
-    pub fields: Vec<Field>,
+    pub search_fields: Vec<Field>,
+    pub id_field: Field,
     pub schema: Schema,
     pub index: Index,
-    pub reader: IndexReader,
     pub searcher: Searcher,
 }
 
@@ -99,6 +97,43 @@ impl CacheInner {
             modified: Some(TimeStamp::now()),
             total_time: Some(100),
             files: files,
+            subfolders: Vec::new(),
+            cover: None,
+            description: None,
+            tags: None,
+        };
+        Ok(af)
+    }
+
+    pub(crate) fn search_collection<S: AsRef<str>>(&self, query: S) -> Result<AudioFolderInner> {
+        let mut result: Vec<AudioFileInner> = Vec::new();
+        self.search.clone().map(|s| {
+            let query_parser = QueryParser::for_index(&s.index, s.search_fields);
+            let query = query_parser.parse_query(query.as_ref()).unwrap();
+            let searcher = &s.searcher;
+            let search_result = searcher.search(&query, &TopDocs::with_limit(100));
+
+            let map = self.tracks.read().unwrap();
+            for (_score, doc_address) in search_result.unwrap() {
+                let retrieved_doc: TantivyDocument = searcher.doc(doc_address).unwrap();
+                debug!("Found docs: {}", retrieved_doc.to_json(&s.schema));
+                retrieved_doc.get_first(s.id_field)
+                    .map(|id_owned| {
+                        match id_owned {
+                            // Find track by id from search result and put in result vec
+                            OwnedValue::U64(id) => map.get(&(*id as u32)).map(|af| result.push(af.clone())),
+                            _ => None,
+                        }
+                    }
+                );
+            }
+        });
+        let af = AudioFolderInner {
+            is_file: false,
+            is_collapsed: false,
+            modified: Some(TimeStamp::now()),
+            total_time: Some(0),
+            files: result,
             subfolders: Vec::new(),
             cover: None,
             description: None,

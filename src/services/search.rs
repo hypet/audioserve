@@ -10,6 +10,7 @@ pub trait SearchTrait<S> {
         ordering: FoldersOrdering,
         group: Option<String>,
     ) -> SearchResult;
+
     fn recent(&self, collection: usize, group: Option<String>) -> SearchResult;
 }
 
@@ -28,6 +29,7 @@ impl<S: AsRef<str>> SearchTrait<S> for Search<S> {
     ) -> SearchResult {
         self.inner.search(collection, query, ordering, group)
     }
+
     fn recent(&self, collection: usize, group: Option<String>) -> SearchResult {
         self.inner.recent(collection, group)
     }
@@ -42,7 +44,9 @@ impl<S: AsRef<str>> Search<S> {
 }
 
 mod col_db {
-    use collection::Collections;
+    use collection::{audio_meta::AudioFile, Collections};
+
+    use crate::services::subs::{path_to_subfolder, pathbuf_to_str};
 
     use super::*;
 
@@ -65,11 +69,19 @@ mod col_db {
             group: Option<String>,
         ) -> SearchResult {
             SearchResult {
-                files: vec![],
-                subfolders: self
+                subfolders: vec![],
+                files: self
                     .collections
                     .search(collection, query, ordering, group)
                     .map_err(|e| error!("Error in collections search: {}", e))
+                    .map(|res| res.files.iter().map(|afi| AudioFile{
+                        id: afi.id,
+                        name: afi.name.clone(),
+                        parent_dir: pathbuf_to_str(&afi.path),
+                        root_subfolder: path_to_subfolder(&afi.path),
+                        meta: afi.meta.clone(),
+                        mime: afi.mime.clone()
+                    }).collect())
                     .unwrap_or_else(|_| vec![]),
             }
         }

@@ -243,7 +243,7 @@ pub fn get_all(
     )
 }
 
-fn path_to_subfolder(path_buf: &PathBuf) -> Option<String> {
+pub fn path_to_subfolder(path_buf: &PathBuf) -> Option<String> {
     match path_buf.components().next() {
         Some(first_component_from_base_dir) => {
             match first_component_from_base_dir {
@@ -257,7 +257,7 @@ fn path_to_subfolder(path_buf: &PathBuf) -> Option<String> {
     }
 }
 
-fn pathbuf_to_str(path_buf: &PathBuf) -> Option<String> {
+pub fn pathbuf_to_str(path_buf: &PathBuf) -> Option<String> {
     if cfg!(target_os = "windows") {
         Some(path_buf.to_str().unwrap().replace("\\", "/").into())
     } else {
@@ -476,6 +476,7 @@ pub fn search(
     Box::pin(
         blocking(move || {
             let res = searcher.search(collection, query, ordering, group);
+
             json_response(&res)
         })
         .map_err(Error::new),

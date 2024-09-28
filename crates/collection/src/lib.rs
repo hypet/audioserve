@@ -9,7 +9,7 @@ use common::{Collection, CollectionTrait, PositionsTrait};
 pub use common::{CollectionOptions, CollectionOptionsMap};
 use error::{Error, Result};
 use legacy_pos::LegacyPositions;
-use no_cache::CollectionDirect;
+// use no_cache::CollectionDirect;
 pub use position::{Position, PositionFilter};
 use serde_json::{Map, Value};
 #[cfg(feature = "async")]
@@ -88,17 +88,12 @@ impl Collections {
             .into_iter()
             .map(move |collection_path| {
                 let opt = collections_options.get_col_options(&collection_path);
-                if opt.no_cache {
-                    info!("Collection {:?} is not using cache", collection_path);
-                    Ok(CollectionDirect::new(collection_path, opt).into())
-                } else {
-                    CollectionCache::new(collection_path, db_path, opt)
-                        .map(|mut cache| {
-                            cache.run_update_loop();
-                            cache
-                        })
-                        .map(Collection::from)
-                }
+                CollectionCache::new(collection_path, db_path, opt)
+                    .map(|mut cache| {
+                        cache.run_update_loop();
+                        cache
+                    })
+                    .map(Collection::from)
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(Collections { caches })
@@ -166,11 +161,8 @@ impl Collections {
         q: S,
         ordering: FoldersOrdering,
         group: Option<String>,
-    ) -> Result<Vec<AudioFolderShort>> {
-        let mut res = self.get_cache(collection)?.search(q, group);
-
-        res.sort_unstable_by(|a, b| a.compare_as(ordering, b));
-        Ok(res)
+    ) -> Result<AudioFolderInner> {
+        self.get_cache(collection)?.search(q, group)
     }
 
     pub fn recent(
