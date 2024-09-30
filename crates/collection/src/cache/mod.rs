@@ -9,8 +9,7 @@ use crate::{
 use crossbeam_channel::{unbounded as channel, Receiver, Sender};
 use inner::SearchEngine;
 use notify::{watcher, DebouncedEvent, Watcher};
-use tantivy::{collector::TopDocs, query::QueryParser, schema::{Schema, INDEXED, STORED, TEXT}, Document, Index, IndexWriter, ReloadPolicy, Searcher, TantivyDocument};
-use tokio::fs::read;
+use tantivy::{schema::{Schema, INDEXED, STORED, TEXT}, Index, IndexWriter, ReloadPolicy, TantivyDocument};
 use std::{
     collections::{BinaryHeap, HashMap},
     convert::TryInto,
@@ -45,11 +44,15 @@ impl CollectionCache {
     ) -> Result<CollectionCache> {
         let root_path = path.into();
         let db_path = CollectionCache::db_path(&root_path, &db_dir)?;
-        let mut options_file = db_path.clone();
-        options_file.set_extension("options.json");
-        let mut tracklist_file = db_path.clone();
+        debug!("db_path: {:?}", &db_path);
+        let _ = DirBuilder::new().create(&db_path);
 
-        tracklist_file.set_extension("json");
+        let mut options_file = db_path.clone();
+        options_file.push("options.json");
+
+        let mut tracklist_file = db_path.clone();
+        tracklist_file.push("playlist.json");
+
         let mut force_update = opt.force_cache_update_on_init;
 
         let save_options = || match File::create(&options_file) {
@@ -98,7 +101,7 @@ impl CollectionCache {
             }
         };
 
-        let mut search_db_path = db_dir.as_ref().to_path_buf();
+        let mut search_db_path = db_path.clone().to_path_buf();
         search_db_path.push("search");
         let _ = DirBuilder::new().create(search_db_path.clone());
 

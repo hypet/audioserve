@@ -32,6 +32,7 @@ mod cache {
 
     impl<S: AsRef<str>> SearchTrait<S> for CachedSearch {
         fn search(&self, collection: usize, query: S, ordering: FoldersOrdering) -> SearchResult {
+            debug!("Search query within collection {}: {}", collection, query);
             let mut res = self.caches[collection]
                 .search_collected(query, |iter| {
                     let mut res = SearchResult::new();

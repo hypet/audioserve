@@ -26,6 +26,7 @@ pub enum PositionsData {
 pub struct CollectionOptions {
     #[serde(skip)]
     pub no_cache: bool,
+    pub ignore_dirs: Option<HashSet<String>>,
     pub chapters_duration: u32,
     pub chapters_from_duration: u32,
     pub ignore_chapters_meta: bool,
@@ -61,6 +62,7 @@ impl Default for CollectionOptions {
     fn default() -> Self {
         Self {
             no_cache: false,
+            ignore_dirs: None,
             force_cache_update_on_init: false,
             chapters_duration: 0,
             chapters_from_duration: 30,
@@ -101,6 +103,17 @@ impl CollectionOptions {
                     .unwrap_or_else(|| invalid_option!("Value is required for option: {}", tag))
                 };
                 match tag {
+                    "ignore-dirs" => {
+                        if let Some(dirs) = val {
+                            let ignored_dirs = dirs
+                                .split('+')
+                                .map(|s| { Ok(s.to_string()) })
+                                .collect::<Result<HashSet<_>>>()?;
+                            self.ignore_dirs = Some(ignored_dirs);
+                        } else {
+                            invalid_option!("Some dirs are required for {}", tag);
+                        }
+                    },
                     "nc" | "no-cache" => self.no_cache = bool_val()?,
                     "force-cache-update" => self.force_cache_update_on_init = bool_val()?,
                     "ignore-chapters-meta" => self.ignore_chapters_meta = bool_val()?,
@@ -164,6 +177,7 @@ impl CollectionOptions {
     }
 }
 
+#[derive(Debug)]
 pub struct CollectionOptionsMap {
     cols: HashMap<PathBuf, CollectionOptions>,
     default: CollectionOptions,
@@ -300,7 +314,7 @@ mod tests {
     #[test]
     fn test_col_options() {
         let mut opt = CollectionOptions::default();
-        opt.update_from_str_options("no-cache,force-cache-update=true,ignore-chapters-meta=false,allow-symlinks,no-dir-collaps=TRUE").expect("good options");
+        opt.update_from_str_options("no-cache,force-cache-update=true,ignore-chapters-meta=false,allow-symlinks,no-dir-collaps=TRUE,ignore-dirs=SomeMusic").expect("good options");
         assert!(opt.no_cache);
         assert!(opt.force_cache_update_on_init);
         assert!(!opt.ignore_chapters_meta);

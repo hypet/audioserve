@@ -463,19 +463,24 @@ pub struct Config {
 
 impl Config {
     pub fn add_base_dir<P: AsRef<str>>(&mut self, p: P) -> Result<()> {
-        let mut parts = p.as_ref().splitn(2, ';');
-        let base_dir = parts
-            .next()
-            .map(PathBuf::from)
-            .ok_or_else(|| Error::in_value("base_dir", "Empty base_dir, nothing before :"))?;
+        let options_delimiter: char  = if cfg!(target_os = "windows") {
+            '#'
+        } else {
+            ':'
+        };
+
+        let parts = p.as_ref().rfind(options_delimiter)
+            .map(|colon_idx| p.as_ref().split_at(colon_idx))
+            .or_else(|| Some((p.as_ref(), ""))).unwrap();
+        let base_dir = PathBuf::from(parts.0);
+        info!("base_dir: {:?}, options: {}", parts.0, parts.1);
 
         if !base_dir.is_dir() {
             return value_error!("base_dir", "{:?} is not direcrory", base_dir);
         }
 
-        if let Some(options) = parts.next() {
-            self.base_dirs_options
-                .insert(base_dir.clone(), options.to_string());
+        if !parts.1.is_empty() {
+            self.base_dirs_options.insert(base_dir.clone(), parts.1[1..].to_string()); // Skip options_delimiter at the beginning of 2nd part
         }
         self.base_dirs.push(base_dir);
         Ok(())

@@ -186,6 +186,10 @@ fn create_parser<'a>() -> Parser<'a> {
             .long("no-dir-collaps")
             .help("Prevents automatic collaps/skip of directory with single chapterized audio file")
             )
+        .arg(Arg::with_name("ignore-dirs")
+            .long("ignore-dirs")
+            .help("Ignores directories")
+            )
         .arg(Arg::with_name("ignore-chapters-meta")
             .long("ignore-chapters-meta")
             .help("Ignore chapters metadata, so files with chapters will not be presented as folders")
@@ -721,6 +725,7 @@ chapters-from-duration  =x  min.duration (mins) of large audio file to be cut to
 tags                    =tag1+tag2...  metadata tags to collect (supported tags names separated by +)
 default-tags            <=true|false>  collect default tags. Use --help-tags argument to get more 
                         information about supported metadata tags 
+ignore-dirs             =folder1+folder2 list of dir names inside audio folder to ignore
 
 
 "

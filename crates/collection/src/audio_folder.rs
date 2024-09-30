@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::{io, vec};
 use std::path::{Path, PathBuf};
-use std::{fs};
+use std::fs;
 
 use super::audio_meta::*;
 use crate::collator::Collate;
@@ -33,6 +33,7 @@ pub(crate) struct FolderOptions {
     pub cd_folder_regex: Option<Regex>,
     #[cfg(feature = "tags-encoding")]
     pub tags_encoding: Option<String>,
+    pub ignore_dirs: Option<HashSet<String>>,
 }
 
 impl From<CollectionOptions> for FolderOptions {
@@ -47,6 +48,7 @@ impl From<CollectionOptions> for FolderOptions {
             cd_folder_regex: o.cd_folder_regex,
             #[cfg(feature = "tags-encoding")]
             tags_encoding: o.tags_encoding,
+            ignore_dirs: o.ignore_dirs
         }
     }
 }
@@ -102,11 +104,31 @@ impl FolderLister {
         let mut counter: u32 = 0;
         let mut files = vec![];
 
-        for entry in WalkDir::new(full_path) {
-            let entry = entry.unwrap();
+        let ignore_dirs = match &self.config.ignore_dirs {
+            Some(dir_set) => dir_set,
+            None => &HashSet::new(),
+        };
+        debug!("ignore: {:?}", ignore_dirs);
+        let mut it = WalkDir::new(full_path).into_iter();
+        loop {
+            let entry = match it.next() {
+                None => break,
+                Some(Err(err)) => {
+                    error!("Error while reading dir {:?}: {}", &full_path, err);
+                    continue;
+                },
+                Some(Ok(entry)) => entry,
+            };
             let entry_path: &Path = entry.path().strip_prefix(base_dir.as_ref()).unwrap();
-            if entry.path().is_file() {
-                
+            if entry.path().is_dir() {
+                debug!("Reading dir: {:?}", &entry_path);
+                let dir_str = &entry_path.as_os_str().to_str().unwrap().to_string();
+                if ignore_dirs.contains(dir_str) {
+                    debug!("Ignoring dir: {:?}", &entry_path);
+                    it.skip_current_dir();
+                    continue;
+                }
+            } else if entry.path().is_file() {
                 let audio_info = get_audio_properties(&entry.path());
                 match audio_info {
                     Ok(meta) => {
@@ -125,7 +147,7 @@ impl FolderLister {
                         files.push(af);
                     },
                     Err(_) => {
-                        debug!("Skipping file {:?} because error in extraction of audio meta", &entry.path());
+                        trace!("Skipping file {:?} because error in extraction of audio meta", &entry.path());
                         continue;
                     }
                 };
