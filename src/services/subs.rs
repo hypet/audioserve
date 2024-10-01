@@ -221,11 +221,10 @@ pub fn get_all(
                     let af = AudioFolder {
                         modified: None,
                         total_time: folder.total_time,
-                        files: folder.files.iter().map(|afi| AudioFile{
+                        files: folder.files.iter().map(|afi| AudioFile {
                             id: afi.id,
                             name: afi.name.clone(),
-                            parent_dir: pathbuf_to_str(&afi.path),
-                            root_subfolder: path_to_subfolder(&afi.path),
+                            path: pathbuf_to_str_vec(&afi.path),
                             meta: afi.meta.clone(),
                             mime: afi.mime.clone()
                         }).collect(),
@@ -255,12 +254,8 @@ pub fn path_to_subfolder(path_buf: &PathBuf) -> Option<String> {
     }
 }
 
-pub fn pathbuf_to_str(path_buf: &PathBuf) -> Option<String> {
-    if cfg!(target_os = "windows") {
-        Some(path_buf.to_str().unwrap().replace("\\", "/").into())
-    } else {
-        Some(path_buf.to_str().unwrap().into())
-    }
+pub fn pathbuf_to_str_vec(path_buf: &PathBuf) -> Vec<String> {
+    path_buf.components().map(|c| c.as_os_str().to_str().unwrap().into()).collect()
 }
 
 #[cfg(feature = "folder-download")]

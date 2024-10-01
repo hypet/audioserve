@@ -46,7 +46,7 @@ impl<S: AsRef<str>> Search<S> {
 mod col_db {
     use collection::{audio_meta::AudioFile, Collections};
 
-    use crate::services::subs::{path_to_subfolder, pathbuf_to_str};
+    use crate::services::subs::{path_to_subfolder, pathbuf_to_str_vec};
 
     use super::*;
 
@@ -74,11 +74,10 @@ mod col_db {
                     .collections
                     .search(collection, query, ordering, group)
                     .map_err(|e| error!("Error in collections search: {}", e))
-                    .map(|res| res.files.iter().map(|afi| AudioFile{
+                    .map(|res| res.files.iter().map(|afi| AudioFile {
                         id: afi.id,
                         name: afi.name.clone(),
-                        parent_dir: pathbuf_to_str(&afi.path),
-                        root_subfolder: path_to_subfolder(&afi.path),
+                        path: pathbuf_to_str_vec(&afi.path),
                         meta: afi.meta.clone(),
                         mime: afi.mime.clone()
                     }).collect())
