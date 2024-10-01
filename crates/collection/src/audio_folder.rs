@@ -34,6 +34,7 @@ pub(crate) struct FolderOptions {
     #[cfg(feature = "tags-encoding")]
     pub tags_encoding: Option<String>,
     pub ignore_dirs: Option<HashSet<String>>,
+    pub flatten_dirs: Option<HashSet<String>>,
 }
 
 impl From<CollectionOptions> for FolderOptions {
@@ -48,7 +49,8 @@ impl From<CollectionOptions> for FolderOptions {
             cd_folder_regex: o.cd_folder_regex,
             #[cfg(feature = "tags-encoding")]
             tags_encoding: o.tags_encoding,
-            ignore_dirs: o.ignore_dirs
+            ignore_dirs: o.ignore_dirs,
+            flatten_dirs: o.flatten_dirs,
         }
     }
 }
@@ -101,25 +103,51 @@ impl FolderLister {
         base_dir: P,
     ) -> Result<AudioFolderInner, io::Error> {
         let full_path = base_dir.as_ref();
-        let mut counter: u32 = 0;
+        let mut file_id: u32 = 0;
         let mut files = vec![];
 
         let ignore_dirs = match &self.config.ignore_dirs {
             Some(dir_set) => dir_set,
             None => &HashSet::new(),
         };
-        debug!("ignore: {:?}", ignore_dirs);
-        let mut it = WalkDir::new(full_path).into_iter();
+        let flatten_dirs = match &self.config.flatten_dirs {
+            Some(dir_set) => dir_set,
+            None => &HashSet::new(),
+        };
+        file_id = self.traverse_dir(full_path, ignore_dirs, None, file_id, &mut files);
+        debug!("Flatten dirs: {:?}", flatten_dirs);
+        flatten_dirs.iter().for_each(|dir| {
+            let mut path = base_dir.as_ref().to_owned().clone().to_path_buf();
+            path.push(dir);
+            debug!("Path to flatten: {:?}", path);
+            file_id = self.traverse_dir(path.as_ref(), &HashSet::new(), Some(dir),  file_id, &mut files)
+        });
+        info!("Files read: {}", &files.len());
+
+        Ok(AudioFolderInner {
+            modified: None,
+            total_time: None,
+            files,
+            subfolders: Vec::new(),
+            cover: None,
+            description: None,
+            tags: None,
+        })
+    }
+
+    fn traverse_dir(&self, base_path: &Path, ignore_dirs: &HashSet<String>, flatten_dir: Option<&String>, file_id_start: u32, files: &mut Vec<AudioFileInner>) -> u32 {
+        let mut file_counter: u32 = file_id_start;
+        let mut it = WalkDir::new(base_path).into_iter();
         loop {
             let entry = match it.next() {
                 None => break,
                 Some(Err(err)) => {
-                    error!("Error while reading dir {:?}: {}", &full_path, err);
+                    error!("Error while reading dir {:?}: {}", &base_path, err);
                     continue;
                 },
                 Some(Ok(entry)) => entry,
             };
-            let entry_path: &Path = entry.path().strip_prefix(base_dir.as_ref()).unwrap();
+            let entry_path: &Path = entry.path().strip_prefix(base_path).unwrap();
             if entry.path().is_dir() {
                 debug!("Reading dir: {:?}", &entry_path);
                 let dir_str = &entry_path.as_os_str().to_str().unwrap().to_string();
@@ -132,18 +160,31 @@ impl FolderLister {
                 let audio_info = get_audio_properties(&entry.path());
                 match audio_info {
                     Ok(meta) => {
-                        counter += 1;
+                        file_counter += 1;
+
+                        let path = match flatten_dir {
+                            Some(dir) => {
+                                let mut p = PathBuf::new();
+                                p.push(dir);
+                                p.push(entry_path);
+                                p
+                            },
+                            None => entry_path.to_path_buf(),
+                        };
+                        
+                        debug!("Flattened: {:?}", path);
+                        
                         let mime = guess_mime_type(entry_path);
                         let tags = meta.get_audio_info(&self.config.tags);
                         let af = AudioFileInner {
-                            id: counter,
+                            id: file_counter,
                             meta: tags,
-                            path: entry_path.to_path_buf(),
+                            path: path,
                             name: entry.file_name().to_str().unwrap().into(),
                             section: None,
                             mime: mime.to_string(),
                         };
-        
+    
                         files.push(af);
                     },
                     Err(_) => {
@@ -153,21 +194,9 @@ impl FolderLister {
                 };
             }
         }
-        info!("Files read: {}", &files.len());
-
-        Ok(AudioFolderInner {
-            is_file: false,
-            is_collapsed: false,
-            modified: None,
-            total_time: None,
-            files,
-            subfolders: Vec::new(),
-            cover: None,
-            description: None,
-            tags: None,
-        })
+        return file_counter;
     }
-
+    
     pub(crate) fn collapse_cd_enabled(&self) -> bool {
         self.config.cd_folder_regex.is_some()
     }
@@ -278,8 +307,6 @@ impl FolderLister {
                 let mut cover = None;
                 let mut description = None;
                 let tags;
-                let mut is_file = false;
-                let mut is_collapsed = false;
                 let allow_symlinks = self.config.allow_symlinks;
 
                 for item in dir_iter {
@@ -370,9 +397,6 @@ impl FolderLister {
                                 .list_dir_file(base_dir, full_path, audio_meta, chapters, true)?;
                             files = f.files;
                             tags = f.tags;
-                            is_file = true;
-                            // TODO: Should this be also collapsed?
-                            //is_collapsed = true;
                         }
                         _ => {
                             return Err(io::Error::new(
@@ -393,8 +417,6 @@ impl FolderLister {
                 extend_audiofolder(
                     &full_path,
                     AudioFolderInner {
-                        is_file,
-                        is_collapsed,
                         modified: None,
                         total_time: None,
                         files,
@@ -467,8 +489,6 @@ impl FolderLister {
         extend_audiofolder(
             &full_path,
             AudioFolderInner {
-                is_file: true,
-                is_collapsed: false,
                 modified: None,
                 total_time: None,
                 files,

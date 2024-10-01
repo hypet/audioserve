@@ -92,8 +92,6 @@ impl CacheInner {
         let map = self.tracks.read().unwrap();
         let files: Vec<AudioFileInner> = map.values().map(|f| f.to_owned()).collect();
         let af = AudioFolderInner {
-            is_file: false,
-            is_collapsed: false,
             modified: Some(TimeStamp::now()),
             total_time: Some(100),
             files: files,
@@ -129,8 +127,6 @@ impl CacheInner {
             }
         });
         let af = AudioFolderInner {
-            is_file: false,
-            is_collapsed: false,
             modified: Some(TimeStamp::now()),
             total_time: Some(0),
             files: result,

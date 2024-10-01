@@ -102,9 +102,7 @@ pub struct AudioFile {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AudioFolderInner {
-    pub is_file: bool,
     #[serde(default)]
-    pub is_collapsed: bool,
     pub modified: Option<TimeStamp>, // last modification time of this folder
     pub total_time: Option<u32>,     // total playback time of contained audio files
     pub files: Vec<AudioFileInner>,
@@ -116,9 +114,6 @@ pub struct AudioFolderInner {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AudioFolder {
-    pub is_file: bool,
-    #[serde(default)]
-    pub is_collapsed: bool,
     pub modified: Option<TimeStamp>, // last modification time of this folder
     pub total_time: Option<u32>,     // total playback time of contained audio files
     pub files: Vec<AudioFile>,
@@ -316,7 +311,7 @@ pub trait MediaInfo<'a>: Sized {
 }
 
 mod libavformat {
-    use lofty::{Tag, TagType, ItemKey, AudioFile, TaggedFileExt};
+    use lofty::{ItemKey, TaggedFileExt};
 
     use super::*;
     use std::{collections::HashSet, sync::Once};

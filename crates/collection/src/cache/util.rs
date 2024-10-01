@@ -27,7 +27,7 @@ pub fn kv_to_audiofolder<K: AsRef<str>, V: AsRef<[u8]>>(key: K, val: V) -> Audio
     AudioFolderShort {
         name: path.file_name().unwrap().to_string_lossy().into(),
         path: path.into(),
-        is_file: folder.as_ref().map(|f| f.is_file).unwrap_or(false),
+        is_file: false,
         modified: folder.as_ref().and_then(|f| f.modified),
         finished: false,
     }

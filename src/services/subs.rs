@@ -219,8 +219,6 @@ pub fn get_all(
             .map_ok(|res| match res {
                 Ok(folder) => {
                     let af = AudioFolder {
-                        is_file: true,
-                        is_collapsed: false,
                         modified: None,
                         total_time: folder.total_time,
                         files: folder.files.iter().map(|afi| AudioFile{

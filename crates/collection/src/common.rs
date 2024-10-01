@@ -27,6 +27,7 @@ pub struct CollectionOptions {
     #[serde(skip)]
     pub no_cache: bool,
     pub ignore_dirs: Option<HashSet<String>>,
+    pub flatten_dirs: Option<HashSet<String>>,
     pub chapters_duration: u32,
     pub chapters_from_duration: u32,
     pub ignore_chapters_meta: bool,
@@ -63,6 +64,7 @@ impl Default for CollectionOptions {
         Self {
             no_cache: false,
             ignore_dirs: None,
+            flatten_dirs: None,
             force_cache_update_on_init: false,
             chapters_duration: 0,
             chapters_from_duration: 30,
@@ -103,6 +105,17 @@ impl CollectionOptions {
                     .unwrap_or_else(|| invalid_option!("Value is required for option: {}", tag))
                 };
                 match tag {
+                    "flatten-dirs" => {
+                        if let Some(dirs) = val {
+                            let flatten_dirs = dirs
+                                .split('+')
+                                .map(|s| { Ok(s.to_string()) })
+                                .collect::<Result<HashSet<_>>>()?;
+                            self.flatten_dirs = Some(flatten_dirs);
+                        } else {
+                            invalid_option!("Some dirs are required for {}", tag);
+                        }
+                    },
                     "ignore-dirs" => {
                         if let Some(dirs) = val {
                             let ignored_dirs = dirs

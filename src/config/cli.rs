@@ -190,6 +190,10 @@ fn create_parser<'a>() -> Parser<'a> {
             .long("ignore-dirs")
             .help("Ignores directories")
             )
+        .arg(Arg::with_name("flatten-dirs")
+            .long("flatten-dirs")
+            .help("Includes specified directories into the playlist")
+            )
         .arg(Arg::with_name("ignore-chapters-meta")
             .long("ignore-chapters-meta")
             .help("Ignore chapters metadata, so files with chapters will not be presented as folders")
@@ -726,7 +730,9 @@ tags                    =tag1+tag2...  metadata tags to collect (supported tags 
 default-tags            <=true|false>  collect default tags. Use --help-tags argument to get more 
                         information about supported metadata tags 
 ignore-dirs             =folder1+folder2 list of dir names inside audio folder to ignore
-
+flatten-dirs            =folder1+folder2 list of dir names to include into playlist as they are 
+                        inside base_dir. Should be combined with ignore-dirs if flatten-dirs are 
+                        inside base_dir.
 
 "
     )
