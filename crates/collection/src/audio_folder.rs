@@ -172,8 +172,6 @@ impl FolderLister {
                             None => entry_path.to_path_buf(),
                         };
                         
-                        debug!("Flattened: {:?}", path);
-                        
                         let mime = guess_mime_type(entry_path);
                         let tags = meta.get_audio_info(&self.config.tags);
                         let af = AudioFileInner {
