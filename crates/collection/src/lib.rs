@@ -162,6 +162,7 @@ impl Collections {
         ordering: FoldersOrdering,
         group: Option<String>,
     ) -> Result<AudioFolderInner> {
+        debug!("search by {} collection: [{}]", collection, q.as_ref());
         self.get_cache(collection)?.search(q, group)
     }
 

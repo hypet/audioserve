@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap, ops::Deref, path::{Path, PathBuf}, sync::{Arc, RwLock}, time::SystemTime, vec
+    collections::HashMap, ops::Deref, path::{Path, PathBuf}, sync::{Arc, RwLock}, time::SystemTime, vec,
 };
 
 use crossbeam_channel::Sender;
@@ -9,8 +9,8 @@ use sled::{
     transaction::{self, TransactionError, Transactional},
     Batch, Db, IVec, Tree,
 };
-use tantivy::{collector::TopDocs, query::QueryParser, schema::{Field, OwnedValue, Schema}, Document, Index, IndexReader, Searcher, TantivyDocument};
-
+use tantivy::{collector::TopDocs, query::QueryParser, schema::{Field, OwnedValue, Schema}, Document, Index, IndexReader, Searcher, TantivyDocument, Term};
+use tantivy::query::{BooleanQuery, FuzzyTermQuery, Occur, Query, RegexQuery};
 use crate::{
     audio_folder::{DirType, FolderLister},
     audio_meta::{AudioFolderInner, TimeStamp},
@@ -106,15 +106,28 @@ impl CacheInner {
     pub(crate) fn search_collection<S: AsRef<str>>(&self, query: S) -> Result<AudioFolderInner> {
         let mut result: Vec<AudioFileInner> = Vec::new();
         self.search.clone().map(|s| {
-            let query_parser = QueryParser::for_index(&s.index, s.search_fields);
-            let query = query_parser.parse_query(query.as_ref()).unwrap();
+            let mut boolean_query: Vec<(Occur, Box<dyn Query>)> = Vec::new();
+            boolean_query.push(
+                (Occur::Should, Box::new(QueryParser::for_index(&s.index, s.search_fields.clone()).parse_query(query.as_ref()).unwrap()))
+            );
+
+            s.search_fields.iter().for_each(|field| {
+                boolean_query.push(
+                    (Occur::Should, Box::new(RegexQuery::from_pattern(format!(".*{}.*", query.as_ref()).as_str(), *field).unwrap()))
+                );
+                boolean_query.push(
+                    (Occur::Should, Box::new(FuzzyTermQuery::new(Term::from_field_text(*field, query.as_ref()), 2, true)))
+                );
+            });
+            let query = BooleanQuery::new(boolean_query);
+
             let searcher = &s.searcher;
             let search_result = searcher.search(&query, &TopDocs::with_limit(100));
 
             let map = self.tracks.read().unwrap();
-            for (_score, doc_address) in search_result.unwrap() {
+            for (score, doc_address) in search_result.unwrap() {
                 let retrieved_doc: TantivyDocument = searcher.doc(doc_address).unwrap();
-                debug!("Found docs: {}", retrieved_doc.to_json(&s.schema));
+                debug!("Found: {} : {}", score, retrieved_doc.to_json(&s.schema));
                 retrieved_doc.get_first(s.id_field)
                     .map(|id_owned| {
                         match id_owned {
@@ -122,8 +135,7 @@ impl CacheInner {
                             OwnedValue::U64(id) => map.get(&(*id as u32)).map(|af| result.push(af.clone())),
                             _ => None,
                         }
-                    }
-                );
+                    });
             }
         });
         let af = AudioFolderInner {
@@ -485,7 +497,7 @@ impl CacheInner {
         collection_no: usize,
         res: &mut PositionsCollector,
     ) where
-        I: Iterator<Item = std::result::Result<(sled::IVec, sled::IVec), sled::Error>>,
+        I: Iterator<Item=std::result::Result<(sled::IVec, sled::IVec), sled::Error>>,
         S: AsRef<str>,
     {
         iter.filter_map(|res| {
@@ -735,7 +747,6 @@ impl CacheInner {
     }
 
     pub(crate) fn proceed_update(&self, update: UpdateAction) {
-
         debug!("Update action: {:?}", update);
 
         match update {
