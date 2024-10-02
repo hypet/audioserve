@@ -144,13 +144,15 @@ impl CollectionCache {
     fn init_search_engine(search_db_path: &PathBuf, track_map: &HashMap<u32, AudioFileInner>) -> Option<SearchEngine> {
         let mut schema_builder = Schema::builder();
         schema_builder.add_u64_field("id", INDEXED | STORED);
-        schema_builder.add_text_field("title", TEXT | STORED);
-        schema_builder.add_text_field("tags", TEXT | STORED);
+        schema_builder.add_text_field("title", TEXT);
+        schema_builder.add_text_field("tags", TEXT);
+        schema_builder.add_text_field("dir", TEXT);
 
         let schema = schema_builder.build();
         let id = schema.get_field("id").unwrap();
         let title = schema.get_field("title").unwrap();
         let tags = schema.get_field("tags").unwrap();
+        let dir = schema.get_field("dir").unwrap();
 
         let index = match Index::open_in_dir(search_db_path) {
             Ok(idx) => idx,
@@ -170,6 +172,9 @@ impl CollectionCache {
                                 }
                             }
                         });
+                        if let Some(track_dir) = track.path.components().last() {
+                            doc.add_text(dir, track_dir.as_os_str().to_str().unwrap());
+                        }
                         let _ = index_writer.add_document(doc);
                     });
                     let _ = index_writer.commit();
@@ -186,7 +191,7 @@ impl CollectionCache {
         let searcher = reader.searcher();
         debug!("Search engine initialized");
         Some(SearchEngine { 
-            search_fields: vec![title, tags], 
+            search_fields: vec![title, tags, dir],
             id_field: id,
             schema: schema,
             index: index, 
