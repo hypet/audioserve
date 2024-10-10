@@ -103,6 +103,15 @@ impl Devices {
             active_device_id: RwLock::new(Option::None),
         }
     }
+
+    pub fn refresh_active_device(&self) {
+        if self.map.len() == 1 {
+            if let Some(device) = self.map.iter().nth(0) {
+                let mut active_device_id = self.active_device_id.write().unwrap();
+                *active_device_id = Some(device.id);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Copy)]
@@ -876,10 +885,7 @@ async fn handle_connection(
             ws: tx,
         },
     );
-    if devices.map.len() == 1 {
-        let mut active_device_id = devices.active_device_id.write().unwrap();
-        *active_device_id = Some(device_uuid);
-    }
+    devices.refresh_active_device();
 
     let (outgoing, incoming) = ws_stream.split();
 
@@ -1095,12 +1101,19 @@ fn send_updated_device_list(devices: Arc<Devices>) {
         }
         let device_list: Vec<ClientDevice> = devices.map
             .iter()
-            .map(|ref_multi| { 
+            .filter_map(|ref_multi| {
                 let d = ref_multi.value();
-                ClientDevice {
-                    name: d.name.as_ref().unwrap().clone(),
-                    id: d.id.to_string(),
-                    active: active_device_id.is_some_and(|id| d.id == id),
+                match &d.name {
+                    Some(name) => {
+                        Some(
+                            ClientDevice {
+                                name: name.clone(),
+                                id: d.id.to_string(),
+                                active: active_device_id.is_some_and(|id| d.id == id),
+                            }
+                        )
+                    },
+                    None => None,
                 }
             })
             .collect();
@@ -1144,10 +1157,8 @@ fn send_to_all_devices_excluding(msg: MsgOut, devices: Arc<Devices>, device_to_e
             .map(|ref_multi| {
                 let socket_addr = ref_multi.key();
                 let device = ref_multi.value();
-                // debug!("Sending {:?}", &m);
                 match device.ws.unbounded_send(Message::Text(serde_json::to_string(&m).unwrap())) {
                     Ok(_) => {
-                        // debug!("Sent");
                         None
                     },
                     Err(err) => {
@@ -1160,8 +1171,8 @@ fn send_to_all_devices_excluding(msg: MsgOut, devices: Arc<Devices>, device_to_e
             .map(|opt_socket| opt_socket.unwrap()) 
             .collect();
 
-        // debug!("Sent msg to everyone: {:?}", m);
         remove_devices(devices.clone(), inactive_devices);
+        devices.refresh_active_device();
     });
 }
 

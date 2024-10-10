@@ -162,22 +162,12 @@ impl FolderLister {
                     Ok(meta) => {
                         file_counter += 1;
 
-                        let path = match flatten_dir {
-                            Some(dir) => {
-                                let mut p = PathBuf::new();
-                                p.push(dir);
-                                p.push(entry_path);
-                                p
-                            },
-                            None => entry_path.to_path_buf(),
-                        };
-                        
                         let mime = guess_mime_type(entry_path);
                         let tags = meta.get_audio_info(&self.config.tags);
                         let af = AudioFileInner {
                             id: file_counter,
                             meta: tags,
-                            path: path,
+                            path: entry_path.to_path_buf(),
                             name: entry.file_name().to_str().unwrap().into(),
                             section: None,
                             mime: mime.to_string(),
