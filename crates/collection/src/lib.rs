@@ -3,13 +3,12 @@ extern crate log;
 
 pub use audio_folder::{list_dir_files_only, list_dir_files_with_subdirs, parse_chapter_path};
 pub use audio_meta::{AudioFileInner, AudioFolderShort, FoldersOrdering, TimeSpan};
-use audio_meta::{AudioFolderInner, TimeStamp};
+use audio_meta::{AudioFolderInner, ScoredAudioFile, TimeStamp, TrackMeta};
 use cache::CollectionCache;
 use common::{Collection, CollectionTrait, PositionsTrait};
 pub use common::{CollectionOptions, CollectionOptionsMap};
 use error::{Error, Result};
 use legacy_pos::LegacyPositions;
-// use no_cache::CollectionDirect;
 pub use position::{Position, PositionFilter};
 use serde_json::{Map, Value};
 #[cfg(feature = "async")]
@@ -142,6 +141,14 @@ impl Collections {
         self.get_cache(collection)?.get_audio_track(id)
     }
 
+    pub fn get_track_meta(
+        &self,
+        collection: usize,
+        id: u32,
+    ) -> Result<TrackMeta> {
+        self.get_cache(collection)?.get_track_meta(id)
+    }
+
     pub fn count_files_in_dir<P: AsRef<Path>>(&self, collection: usize, dir_path: P) -> Result<usize> {
         self.get_cache(collection)?
             .count_files_in_dir(dir_path)
@@ -161,7 +168,7 @@ impl Collections {
         q: S,
         ordering: FoldersOrdering,
         group: Option<String>,
-    ) -> Result<AudioFolderInner> {
+    ) -> Result<Vec<ScoredAudioFile>> {
         debug!("search by {} collection: [{}]", collection, q.as_ref());
         self.get_cache(collection)?.search(q, group)
     }
@@ -179,6 +186,21 @@ impl Collections {
     pub fn increase_played_times_for_track(&self, collection: usize, id: u32) {
         let _ = self.get_cache(collection)
             .map(|cache| cache.increase_played_times(id));
+    }
+
+    pub fn like_track(&self, collection: usize, id: u32) {
+        let _ = self.get_cache(collection)
+            .map(|cache| cache.like(id));
+    }
+
+    pub fn dislike_track(&self, collection: usize, id: u32) {
+        let _ = self.get_cache(collection)
+            .map(|cache| cache.dislike(id));
+    }
+
+    pub fn reset_like_for_track(&self, collection: usize, id: u32) {
+        let _ = self.get_cache(collection)
+            .map(|cache| cache.reset_like(id));
     }
 }
 

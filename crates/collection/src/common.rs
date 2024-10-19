@@ -1,9 +1,5 @@
 use crate::{
-    audio_meta::{AudioFolderInner, TimeStamp},
-    cache::CollectionCache,
-    error::{invalid_option, invalid_option_err, Error, Result},
-    position::PositionsCollector,
-    AudioFolderShort, FoldersOrdering, Position, AudioFileInner,
+    audio_meta::{AudioFolderInner, ScoredAudioFile, TimeStamp, TrackMeta}, cache::CollectionCache, error::{invalid_option, invalid_option_err, Error, Result}, position::PositionsCollector, AudioFileInner, AudioFolderShort, FoldersOrdering, Position
 };
 use enum_dispatch::enum_dispatch;
 use regex::{Regex, RegexBuilder};
@@ -297,6 +293,11 @@ pub(crate) trait CollectionTrait {
         track_id: u32,
     ) -> Result<AudioFileInner>;
 
+    fn get_track_meta(
+        &self,
+        track_id: u32,
+    ) -> Result<TrackMeta>;
+
     fn count_files_in_dir<P>(
         &self,
         dir_path: P
@@ -306,7 +307,7 @@ pub(crate) trait CollectionTrait {
 
     fn flush(&self) -> Result<()>;
 
-    fn search<S: AsRef<str>>(&self, q: S, group: Option<String>) -> Result<AudioFolderInner>;
+    fn search<S: AsRef<str>>(&self, q: S, group: Option<String>) -> Result<Vec<ScoredAudioFile>>;
 
     fn recent(&self, limit: usize, group: Option<String>) -> Vec<AudioFolderShort>;
 
@@ -314,10 +315,11 @@ pub(crate) trait CollectionTrait {
 
     fn base_dir(&self) -> &Path;
 
-    fn increase_played_times(
-        &self,
-        track_id: u32,
-    );
+    fn increase_played_times(&self, track_id: u32);
+
+    fn like(&self, track_id: u32);
+    fn dislike(&self, track_id: u32);
+    fn reset_like(&self, track_id: u32);
 }
 
 #[cfg(test)]

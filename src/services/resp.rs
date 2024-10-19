@@ -43,6 +43,7 @@ macro_rules! def_resp {
 }
 
 def_resp!(
+    ok(StatusCode::OK, "");
     deny(StatusCode::UNAUTHORIZED, ACCESS_DENIED_MSG);
     too_many_requests(StatusCode::TOO_MANY_REQUESTS, TOO_MANY_REQUESTS_MSG);
     not_found(StatusCode::NOT_FOUND, NOT_FOUND_MESSAGE);

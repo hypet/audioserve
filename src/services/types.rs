@@ -1,5 +1,5 @@
 use super::transcode::TranscodingFormat;
-use collection::{audio_meta::AudioFile, AudioFileInner, AudioFolderShort};
+use collection::{audio_meta::AudioFile, AudioFolderShort};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -27,8 +27,14 @@ impl From<TranscodingFormat> for TranscodingSummary {
 }
 
 #[derive(Debug, Serialize)]
+pub struct ScoredAudioFile {
+    pub score: f32,
+    pub item: AudioFile,
+}
+
+#[derive(Debug, Serialize)]
 pub struct SearchResult {
-    pub files: Vec<AudioFile>,
+    pub files: Vec<ScoredAudioFile>,
     pub subfolders: Vec<AudioFolderShort>,
 }
 

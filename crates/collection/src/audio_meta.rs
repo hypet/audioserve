@@ -97,6 +97,13 @@ pub struct AudioFile {
     pub path: Vec<String>,
     pub meta: Option<AudioMeta>,
     pub mime: String,
+    pub track_meta: TrackMeta,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ScoredAudioFile {
+    pub score: f32,
+    pub item: AudioFileInner,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -141,18 +148,35 @@ pub struct AudioMeta {
     pub duration: u32, // duration in seconds, if available
     pub bitrate: u32,  // bitrate in kB/s
     pub tags: Option<HashMap<String, String>>,
-    pub played_times: u32,
 }
 
-impl AudioMeta {
-    pub fn increase_played_times(&mut self) {
-        self.played_times += 1;
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TrackMeta {
+    pub played_times: u32,
+    pub like: Option<bool>,
+}
+
+impl Default for TrackMeta {
+    fn default() -> Self {
+        Self { played_times: 0, like: None }
     }
 }
 
-impl AudioFileInner {
+impl TrackMeta {
     pub fn increase_played_times(&mut self) {
-        self.meta.as_mut().map(|meta| meta.increase_played_times());
+        self.played_times += 1;
+    }
+
+    pub fn like(&mut self) {
+        self.like = Some(true);
+    }
+
+    pub fn dislike(&mut self) {
+        self.like = Some(false);
+    }
+
+    pub fn reset_like(&mut self) {
+        self.like = None;
     }
 }
 
@@ -313,7 +337,7 @@ mod libavformat {
     use lofty::{ItemKey, TaggedFileExt};
 
     use super::*;
-    use std::{collections::HashSet, sync::Once};
+    use std::collections::HashSet;
 
     pub struct Info {
         media_file: media_info::MediaFile,
@@ -325,7 +349,6 @@ mod libavformat {
                 duration: (self.media_file.duration() as f32 / 1000.0).round() as u32,
                 bitrate: self.media_file.bitrate(),
                 tags: self.collect_tags(required_tags),
-                played_times: 0,
             })
         }
 

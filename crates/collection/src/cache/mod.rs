@@ -4,19 +4,21 @@ use self::{
     util::kv_to_audiofolder,
 };
 use crate::{
-    audio_folder::FolderLister, audio_meta::{self, AudioFolderInner, FolderByModification, TimeStamp}, cache::update::{filter_event, FilteredEvent}, common::{CollectionOptions, CollectionTrait, PositionsData, PositionsTrait}, error::{Error, Result}, position::{Position, PositionsCollector}, util::get_modified, AudioFileInner, AudioFolderShort, FoldersOrdering
+    audio_folder::FolderLister, audio_meta::{AudioFolderInner, FolderByModification, ScoredAudioFile, TimeStamp, TrackMeta}, cache::update::{filter_event, FilteredEvent}, common::{CollectionOptions, CollectionTrait, PositionsData, PositionsTrait}, error::{Error, Result}, position::{Position, PositionsCollector}, util::get_modified, AudioFileInner, AudioFolderShort, FoldersOrdering
 };
 use crossbeam_channel::{unbounded as channel, Receiver, Sender};
 use inner::SearchEngine;
 use notify::{watcher, DebouncedEvent, Watcher};
+use sled::Db;
 use tantivy::{schema::{Schema, INDEXED, STORED, TEXT}, Index, IndexWriter, ReloadPolicy, TantivyDocument};
+use util::deser_audiofile;
 use std::{
-    collections::{BinaryHeap, HashMap},
+    collections::BinaryHeap,
     convert::TryInto,
     fs::{DirBuilder, File},
     io,
     path::{Path, PathBuf},
-    sync::{Arc, Condvar, Mutex, RwLock},
+    sync::{Arc, Condvar, Mutex},
     thread,
     time::Duration,
 };
@@ -50,9 +52,6 @@ impl CollectionCache {
         let mut options_file = db_path.clone();
         options_file.push("options.json");
 
-        let mut tracklist_file = db_path.clone();
-        tracklist_file.push("playlist.json");
-
         let mut force_update = opt.force_cache_update_on_init;
 
         let save_options = || match File::create(&options_file) {
@@ -84,45 +83,33 @@ impl CollectionCache {
             }
         }
 
-        let lister = FolderLister::new_with_options(opt.into());
-
-        let track_map: HashMap<u32, AudioFileInner> = match File::open(&tracklist_file).and_then(|f| {
-            serde_json::from_reader::<_, HashMap<u32, AudioFileInner>>(f)
-                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
-        }) {
-            Ok(tracklist) => {
-                info!("Loaded {} entries from {:?}", &tracklist.len(), &tracklist_file);
-                tracklist
-            }
-            Err(e) => {
-                warn!("Cannot read track list on {:?} due to {}, will enforce full cache update", root_path, e);
-
-                Self::update_tracks_inner(&lister, &root_path, &tracklist_file)
-            }
-        };
-
-        let mut search_db_path = db_path.clone().to_path_buf();
-        search_db_path.push("search");
-        let _ = DirBuilder::new().create(search_db_path.clone());
-
-        let search_engine: Option<SearchEngine> = Self::init_search_engine(&search_db_path, &track_map);
-
         let db = sled::Config::default()
             .path(&db_path)
             // .use_compression(true)
             .flush_every_ms(Some(10_000))
             .cache_capacity(100 * 1024 * 1024)
             .open()?;
+
+        let lister = FolderLister::new_with_options(opt.into(), db.clone());
+        info!("Traversing collection {:?}, db contains {} records", &root_path, db.len());
+        if db.is_empty() {
+            let _ = lister.traverse_collection(&root_path);
+        }
+
+        let mut search_db_path = db_path.clone().to_path_buf();
+        search_db_path.push("search");
+        let _ = DirBuilder::new().create(search_db_path.clone());
+
+        let search_engine: Option<SearchEngine> = Self::init_search_engine(&search_db_path, &db);
+
         let (update_sender, update_receiver) = channel::<Option<UpdateAction>>();
 
-        let tracks = Arc::new(RwLock::from(track_map));
         Ok(CollectionCache {
             inner: Arc::new(CacheInner::new(
                 db,
                 lister,
                 root_path,
                 update_sender.clone(),
-                tracks,
                 search_engine,
             )?),
             thread_loop: None,
@@ -141,41 +128,47 @@ impl CollectionCache {
         })
     }
 
-    fn init_search_engine(search_db_path: &PathBuf, track_map: &HashMap<u32, AudioFileInner>) -> Option<SearchEngine> {
+    fn init_search_engine(search_db_path: &PathBuf, db: &Db) -> Option<SearchEngine> {
         let mut schema_builder = Schema::builder();
         schema_builder.add_u64_field("id", INDEXED | STORED);
-        schema_builder.add_text_field("title", TEXT);
-        schema_builder.add_text_field("tags", TEXT);
-        schema_builder.add_text_field("dir", TEXT);
+        schema_builder.add_text_field("title", TEXT | STORED);
+        schema_builder.add_text_field("tags", TEXT | STORED);
+        schema_builder.add_text_field("dir", TEXT | STORED);
 
         let schema = schema_builder.build();
-        let id = schema.get_field("id").unwrap();
-        let title = schema.get_field("title").unwrap();
-        let tags = schema.get_field("tags").unwrap();
-        let dir = schema.get_field("dir").unwrap();
+        let id = schema.get_field("id").expect("Could not get 'id' field from schema");
+        let title = schema.get_field("title").expect("Could not get 'title' field from schema");
+        let tags = schema.get_field("tags").expect("Could not get 'tags' field from schema");
+        let dir = schema.get_field("dir").expect("Could not get 'dir' field from schema");
 
+        let mut index_writer: IndexWriter;
         let index = match Index::open_in_dir(search_db_path) {
             Ok(idx) => idx,
             Err(_) => match Index::create_in_dir(&search_db_path, schema.clone()) {
                 Ok(idx) => {
-                    let mut index_writer: IndexWriter = idx.writer(50_000_000).unwrap();
+                    info!("Creating search index...");
+                    index_writer = idx.writer(50_000_000).expect("Could not create writer for index");
 
-                    track_map.iter().for_each(|(_, track)| {
-                        let mut doc = TantivyDocument::default();
-                        doc.add_u64(id, track.id as u64);
-                        doc.add_text(title, track.name.as_str());
-                        let meta = track.meta.as_ref();
-                        meta.map(|audio_meta| {
-                            if let Some(file_tags) = audio_meta.tags.as_ref() {
-                                for (_, v) in file_tags {
-                                    doc.add_text(tags, v);
+                    db.iter().filter_map(|r| r.ok())
+                        .for_each(|(_, val)| {
+                            if let Some(af) = deser_audiofile(val) {
+                                debug!("Indexing {}", &af.id);
+                                let mut doc = TantivyDocument::default();
+                                doc.add_u64(id, af.id as u64);
+                                doc.add_text(title, af.name.as_str());
+                                let meta = af.meta.as_ref();
+                                meta.map(|audio_meta| {
+                                    if let Some(file_tags) = audio_meta.tags.as_ref() {
+                                        for (_, v) in file_tags {
+                                            doc.add_text(tags, v);
+                                        }
+                                    }
+                                });
+                                if let Some(track_dir) = af.path.components().last() {
+                                    doc.add_text(dir, track_dir.as_os_str().to_str().unwrap());
                                 }
+                                let _ = index_writer.add_document(doc);
                             }
-                        });
-                        if let Some(track_dir) = track.path.components().last() {
-                            doc.add_text(dir, track_dir.as_os_str().to_str().unwrap());
-                        }
-                        let _ = index_writer.add_document(doc);
                     });
                     let _ = index_writer.commit();
 
@@ -195,7 +188,7 @@ impl CollectionCache {
             id_field: id,
             schema: schema,
             index: index, 
-            searcher: searcher
+            searcher: searcher,
         })
     }
 
@@ -212,39 +205,6 @@ impl CollectionCache {
             .map(|name| name.to_string_lossy() + "_" + name_prefix.as_ref())
             .ok_or(Error::InvalidCollectionPath)?;
         Ok(db_dir.as_ref().join(name.as_ref()))
-    }
-
-    pub(crate) fn update_tracks(lister: &FolderLister, root_path: &PathBuf, tracklist_file: &PathBuf) -> HashMap<u32, AudioFileInner> {
-        Self::update_tracks_inner(lister, root_path, tracklist_file)
-    }
-
-    fn update_tracks_inner(lister: &FolderLister, root_path: &PathBuf, tracklist_file: &PathBuf) -> HashMap<u32, AudioFileInner> {
-        let track_map: HashMap<u32, AudioFileInner> = match lister.list_all(&root_path) {
-            Ok(af) => af.files.iter().map(|t| {
-                let audio_file = AudioFileInner {
-                    id: t.id,
-                    meta: t.meta.clone(),
-                    name: t.name.clone(),
-                    path: t.path.parent().unwrap().to_path_buf(),
-                    mime: t.mime.clone(),
-                    section: None,
-                };
-                return (t.id, audio_file)
-            }).collect(),
-            Err(e) => {
-                error!("Failed to build track list at {:?}: {}", &root_path, e);
-                HashMap::new()
-            },
-        };
-        match File::create(&tracklist_file) {
-            Ok(f) => match serde_json::to_writer(f, &track_map) {
-                Ok(_) => debug!("Created track list file {:?}", tracklist_file),
-                Err(e) => error!("Cannot create {:?} : {}", tracklist_file, e),
-            },
-            Err(e) => error!("Cannot create {:?} : {}", tracklist_file, e),
-        };
-
-        track_map
     }
 
     pub(crate) fn restore_positions<P1: Into<PathBuf>, P2: AsRef<Path>>(
@@ -423,7 +383,7 @@ impl CollectionTrait for CollectionCache {
         self.inner.flush()
     }
 
-    fn search<S: AsRef<str>>(&self, q: S, group: Option<String>) -> Result<AudioFolderInner> {
+    fn search<S: AsRef<str>>(&self, q: S, group: Option<String>) -> Result<Vec<ScoredAudioFile>> {
         self.inner.search_collection(q)
     }
 
@@ -477,6 +437,22 @@ impl CollectionTrait for CollectionCache {
 
     fn increase_played_times(&self, track_id: u32) {
         self.inner.increase_played_times(track_id)
+    }
+    
+    fn like(&self, track_id: u32) {
+        self.inner.like(track_id)
+    }
+    
+    fn dislike(&self, track_id: u32) {
+        self.inner.dislike(track_id)
+    }
+
+    fn reset_like(&self, track_id: u32) {
+        self.inner.reset_like(track_id)
+    }
+    
+    fn get_track_meta(&self,track_id:u32,) -> Result<TrackMeta> {
+        self.inner.get_track_meta(track_id)
     }
 
 }
@@ -740,15 +716,15 @@ mod tests {
         env_logger::try_init().ok();
         let (col, _tmp_dir) = create_tmp_collection();
         let res: Result<_> = col.search("usak kulisak", None);
-        let files = res.unwrap().files;
+        let files = res.unwrap();
         assert_eq!(1, files.len());
         let af = &files[0];
-        assert_eq!("kulisak", af.name.as_str());
+        assert_eq!("kulisak", af.item.name.as_str());
         let corr_path = Path::new("usak").join("kulisak");
-        assert_eq!(corr_path, af.path);
+        assert_eq!(corr_path, af.item.path);
 
         let res: Result<_> = col.search("neneneexistuje", None);
-        assert_eq!(0, res.unwrap().files.len());
+        assert_eq!(0, res.unwrap().len());
     }
 
     #[test]

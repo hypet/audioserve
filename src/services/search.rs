@@ -44,9 +44,9 @@ impl<S: AsRef<str>> Search<S> {
 }
 
 mod col_db {
-    use collection::{audio_meta::AudioFile, Collections};
+    use collection::{audio_meta::{AudioFile, TrackMeta}, Collections};
 
-    use crate::services::subs::{path_to_subfolder, pathbuf_to_str_vec};
+    use crate::services::{subs::pathbuf_to_str_vec, types::ScoredAudioFile};
 
     use super::*;
 
@@ -68,18 +68,23 @@ mod col_db {
             ordering: FoldersOrdering,
             group: Option<String>,
         ) -> SearchResult {
+            let collections_track_meta = self.collections.clone();
             SearchResult {
                 subfolders: vec![],
                 files: self
                     .collections
                     .search(collection, query, ordering, group)
                     .map_err(|e| error!("Error in collections search: {}", e))
-                    .map(|res| res.files.iter().map(|afi| AudioFile {
-                        id: afi.id,
-                        name: afi.name.clone(),
-                        path: pathbuf_to_str_vec(&afi.path),
-                        meta: afi.meta.clone(),
-                        mime: afi.mime.clone()
+                    .map(|res| res.iter().map(|scored_af| ScoredAudioFile {
+                        score: scored_af.score,
+                        item: AudioFile {
+                            id: scored_af.item.id,
+                            name: scored_af.item.name.clone(),
+                            path: pathbuf_to_str_vec(&scored_af.item.path),
+                            meta: scored_af.item.meta.clone(),
+                            mime: scored_af.item.mime.clone(),
+                            track_meta: collections_track_meta.get_track_meta(collection, scored_af.item.id).map_or(TrackMeta::default() , |v| v),
+                        }
                     }).collect())
                     .unwrap_or_else(|_| vec![]),
             }

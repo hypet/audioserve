@@ -1,7 +1,21 @@
 use std::{
-    collections::HashMap, ops::Deref, path::{Path, PathBuf}, sync::{Arc, RwLock}, time::SystemTime, vec,
+    collections::HashMap,
+    ops::Deref,
+    path::{Path, PathBuf},
+    time::SystemTime,
+    vec,
 };
 
+use crate::{
+    audio_folder::{DirType, FolderLister},
+    audio_meta::{AudioFolderInner, ScoredAudioFile, TimeStamp, TrackMeta},
+    cache::util::{split_path, update_path},
+    common::PositionsData,
+    error::{Error, Result, TreeType},
+    position::{PositionItem, PositionRecord, PositionsCollector, MAX_GROUPS},
+    util::get_modified,
+    AudioFileInner, AudioFolderShort, FoldersOrdering, Position,
+};
 use crossbeam_channel::Sender;
 use notify::DebouncedEvent;
 use serde_json::Value;
@@ -9,22 +23,17 @@ use sled::{
     transaction::{self, TransactionError, Transactional},
     Batch, Db, IVec, Tree,
 };
-use tantivy::{collector::TopDocs, query::QueryParser, schema::{Field, OwnedValue, Schema}, Document, Index, IndexReader, Searcher, TantivyDocument, Term};
-use tantivy::query::{BooleanQuery, FuzzyTermQuery, Occur, Query, RegexQuery};
-use crate::{
-    audio_folder::{DirType, FolderLister},
-    audio_meta::{AudioFolderInner, TimeStamp},
-    cache::util::{split_path, update_path},
-    common::PositionsData,
-    error::{Error, Result},
-    position::{PositionItem, PositionRecord, PositionsCollector, MAX_GROUPS},
-    util::get_modified,
-    AudioFolderShort, FoldersOrdering, Position, AudioFileInner,
+use tantivy::{query::{BooleanQuery, FuzzyTermQuery, Occur, Query, RegexQuery, TermQuery}, schema::IndexRecordOption};
+use tantivy::{
+    collector::TopDocs,
+    query::QueryParser,
+    schema::{Field, OwnedValue, Schema},
+    Document, Index, Searcher, TantivyDocument, Term,
 };
 
 use super::{
     update::UpdateAction,
-    util::{deser_audiofolder, parent_path},
+    util::{deser_audiofile, deser_audiofolder, deser_trackmeta, parent_path},
 };
 
 #[derive(Clone)]
@@ -39,12 +48,12 @@ pub(crate) struct SearchEngine {
 #[derive(Clone)]
 pub(crate) struct CacheInner {
     db: Db,
+    meta_tree: Tree,
     pos_latest: Tree,
     pos_folder: Tree,
     lister: FolderLister,
     base_dir: PathBuf,
     update_sender: Sender<Option<UpdateAction>>,
-    tracks: Arc<RwLock<HashMap<u32, AudioFileInner>>>,
     search: Option<SearchEngine>,
 }
 
@@ -54,19 +63,19 @@ impl CacheInner {
         lister: FolderLister,
         base_dir: PathBuf,
         update_sender: Sender<Option<UpdateAction>>,
-        tracks: Arc<RwLock<HashMap<u32, AudioFileInner>>>,
         search: Option<SearchEngine>,
     ) -> Result<Self> {
         let pos_latest = db.open_tree("pos_latest")?;
         let pos_folder = db.open_tree("pos_folder")?;
+        let meta_tree = db.open_tree("meta")?;
         Ok(CacheInner {
             db,
+            meta_tree,
             pos_latest,
             pos_folder,
             lister,
             base_dir,
             update_sender,
-            tracks,
             search,
         })
     }
@@ -89,8 +98,15 @@ impl CacheInner {
     }
 
     pub(crate) fn list_all(&self) -> Result<AudioFolderInner> {
-        let map = self.tracks.read().unwrap();
-        let files: Vec<AudioFileInner> = map.values().map(|f| f.to_owned()).collect();
+        let files: Vec<AudioFileInner> = self.db.iter()
+            .filter_map(|r| r.ok())
+            .filter_map(|(_, val)| {
+                match deser_audiofile(val) {
+                    Some(af) => Some(af),
+                    None => None,
+                }
+            })
+            .collect();
         let af = AudioFolderInner {
             modified: Some(TimeStamp::now()),
             total_time: Some(100),
@@ -103,61 +119,89 @@ impl CacheInner {
         Ok(af)
     }
 
-    pub(crate) fn search_collection<S: AsRef<str>>(&self, query: S) -> Result<AudioFolderInner> {
-        let mut result: Vec<AudioFileInner> = Vec::new();
+    pub(crate) fn search_collection<S: AsRef<str>>(
+        &self,
+        query: S,
+    ) -> Result<Vec<ScoredAudioFile>> {
+        let mut result: Vec<ScoredAudioFile> = Vec::new();
         self.search.clone().map(|s| {
             let mut boolean_query: Vec<(Occur, Box<dyn Query>)> = Vec::new();
-            boolean_query.push(
-                (Occur::Should, Box::new(QueryParser::for_index(&s.index, s.search_fields.clone()).parse_query(query.as_ref()).unwrap()))
-            );
+            boolean_query.push((
+                Occur::Should,
+                Box::new(
+                    QueryParser::for_index(&s.index, s.search_fields.clone())
+                        .parse_query(query.as_ref())
+                        .unwrap(),
+                ),
+            ));
 
             s.search_fields.iter().for_each(|field| {
-                boolean_query.push(
-                    (Occur::Should, Box::new(RegexQuery::from_pattern(format!(".*{}.*", query.as_ref()).as_str(), *field).unwrap()))
-                );
-                boolean_query.push(
-                    (Occur::Should, Box::new(FuzzyTermQuery::new(Term::from_field_text(*field, query.as_ref()), 2, true)))
-                );
+                boolean_query.push((
+                    Occur::Should,
+                    Box::new(
+                        RegexQuery::from_pattern(
+                            format!(".*{}.*", query.as_ref()).as_str(),
+                            *field,
+                        )
+                        .unwrap(),
+                    ),
+                ));
+                boolean_query.push((
+                    Occur::Should,
+                    Box::new(FuzzyTermQuery::new(
+                        Term::from_field_text(*field, query.as_ref()),
+                        2,
+                        true,
+                    )),
+                ));
             });
-            let query = BooleanQuery::new(boolean_query);
+            let search_query = BooleanQuery::new(boolean_query);
 
             let searcher = &s.searcher;
-            let search_result = searcher.search(&query, &TopDocs::with_limit(100));
+            let search_result = searcher.search(&search_query, &TopDocs::with_limit(100));
 
-            let map = self.tracks.read().unwrap();
-            for (score, doc_address) in search_result.unwrap() {
-                let retrieved_doc: TantivyDocument = searcher.doc(doc_address).unwrap();
-                debug!("Found: {} : {}", score, retrieved_doc.to_json(&s.schema));
-                retrieved_doc.get_first(s.id_field)
-                    .map(|id_owned| {
-                        match id_owned {
-                            // Find track by id from search result and put in result vec
-                            OwnedValue::U64(id) => map.get(&(*id as u32)).map(|af| result.push(af.clone())),
-                            _ => None,
+            match search_result {
+                Ok(found_items) => {
+                    for (score, doc_address) in found_items {
+                        match searcher.doc::<TantivyDocument>(doc_address) {
+                            Ok(retrieved_doc) => {
+                                debug!("Found: {} : {}", score, retrieved_doc.to_json(&s.schema));
+                                retrieved_doc.get_first(s.id_field).map(|id_owned| {
+                                    match id_owned {
+                                        // Find track by id from search result and put in result vec
+                                        OwnedValue::U64(id) =>
+                                            match self.get_audio_track(*id as u32) {
+                                                Ok(af) => result.push(ScoredAudioFile {
+                                                    score: score,
+                                                    item: af.clone(),
+                                                }),
+                                                Err(e) => error!("Error while getting audio track: {}", e),
+                                            },
+                                        _ => (),
+                                    }
+                                });
+                            },
+                            Err(_) => todo!(),
                         }
-                    });
+                    }
+                }
+                Err(e) => error!("Error while searching over tantivy index: {}", e),
             }
         });
-        let af = AudioFolderInner {
-            modified: Some(TimeStamp::now()),
-            total_time: Some(0),
-            files: result,
-            subfolders: Vec::new(),
-            cover: None,
-            description: None,
-            tags: None,
-        };
-        Ok(af)
+        Ok(result)
     }
 
-    pub(crate) fn count_files<P: AsRef<Path>>(
-        &self,
-        dir_path: P,
-    ) -> Result<usize> {
-        let dir = self.lister
+    pub(crate) fn count_files<P: AsRef<Path>>(&self, dir_path: P) -> Result<usize> {
+        let dir = self
+            .lister
             .list_dir(&self.base_dir, &dir_path, FoldersOrdering::Alphabetical)
-            .map_err(Error::from).unwrap();
-        debug!("inner count_files_in_dir {:?}: {}", &dir_path.as_ref().display(), dir.files.len());
+            .map_err(Error::from)
+            .unwrap();
+        debug!(
+            "inner count_files_in_dir {:?}: {}",
+            &dir_path.as_ref().display(),
+            dir.files.len()
+        );
         Ok(dir.files.len())
     }
 
@@ -166,35 +210,137 @@ impl CacheInner {
     }
 
     pub(crate) fn clean_up_folders(&self) {
-        for key in self.iter_folders().filter_map(|e| e.ok()).map(|(k, _)| k) {
-            if let Ok(rel_path) = std::str::from_utf8(&key) {
-                let full_path = self.base_dir.join(rel_path);
-                if !full_path.exists() || self.lister.is_collapsable_folder(&full_path) {
-                    debug!("Removing {:?} from collection cache db", full_path);
-                    self.remove(rel_path)
-                        .map_err(|e| error!("cannot remove record from db: {}", e))
-                        .ok();
+        // for key in self.iter_folders().filter_map(|e| e.ok()).map(|(k, _)| k) {
+        //     if let Ok(rel_path) = std::str::from_utf8(&key) {
+        //         let full_path = self.base_dir.join(rel_path);
+        //         if !full_path.exists() || self.lister.is_collapsable_folder(&full_path) {
+        //             debug!("Removing {:?} from collection cache db", full_path);
+        //             self.remove(rel_path)
+        //                 .map_err(|e| error!("cannot remove record from db: {}", e))
+        //                 .ok();
+        //         }
+        //     }
+        // }
+    }
+
+    pub(crate) fn get_audio_track(&self, track_id: u32) -> Result<AudioFileInner> {
+        match self.db.get(track_id.to_be_bytes()) {
+            Ok(ivec) => {
+                match ivec {
+                    Some(af_ivec) => {
+                        match deser_audiofile(af_ivec) {
+                            Some(af) => Ok(af),
+                            None => Err(Error::CouldNotDeserialize(track_id, TreeType::Root)),
+                        }
+                    },
+                    None => Err(Error::NoIVecForTrackInTree(track_id, TreeType::Root)),
                 }
+            },
+            Err(_) => Err(Error::NoTrackInTree(track_id, TreeType::Root)),
+        }
+    }
+
+    pub(crate) fn get_track_meta(&self, track_id: u32) -> Result<TrackMeta> {
+        match self.meta_tree.get(track_id.to_be_bytes()) {
+            Ok(ivec) => {
+                match ivec {
+                    Some(meta_ivec) => {
+                        match deser_trackmeta(meta_ivec) {
+                            Some(meta) => Ok(meta),
+                            None => Err(Error::CouldNotDeserialize(track_id, TreeType::Meta)),
+                        }
+                    },
+                    None => Err(Error::NoIVecForTrackInTree(track_id, TreeType::Meta)),
+                }
+            },
+            Err(e) => {
+                error!("No track {} in tree, {}", track_id, e);
+                Err(Error::NoTrackInTree(track_id, TreeType::Meta))
             }
         }
     }
 
-    pub(crate) fn get_audio_track(&self, track_id: u32) -> Result<AudioFileInner> {
-        let map = self.tracks.read().unwrap();
-        map.get(&track_id)
-            .map(|track| track.clone())
-            .ok_or(Error::TrackNotFound(track_id))
+    pub(crate) fn count_tracks(&self) -> Result<u32> {
+        Ok(self.db.len() as u32)
     }
 
-    pub(crate) fn count_tracks(&self) -> Result<u32> {
-        let map = self.tracks.read().unwrap();
-        Ok(map.len() as u32)
+    fn increment_inner(old: Option<&[u8]>) -> Option<Vec<u8>> {
+        match old {
+            Some(bytes) => {
+                match deser_trackmeta(bytes) {
+                    Some(mut meta) => {
+                        meta.increase_played_times();
+                        match bincode::serialize(&meta) {
+                            Ok(data) => Some(data),
+                            Err(e) => {
+                                error!("Could not serialize, {}", e);
+                                None
+                            },
+                        }
+                    },
+                    None => {
+                        error!("No data on increment_inner");
+                        None
+                    }
+                }
+            }
+            None => {
+                let track_meta = TrackMeta { played_times: 1, like: None };
+                match bincode::serialize(&track_meta) {
+                    Ok(data) => Some(data),
+                    Err(e) => {
+                        error!("Could not serialize: {}", e);
+                        None
+                    },
+                }
+            },
+        }
     }
 
     pub(crate) fn increase_played_times(&self, track_id: u32) {
-        let mut map = self.tracks.write().unwrap();
-        map.get_mut(&track_id)
-            .map(|track| track.increase_played_times());
+        match self.meta_tree.fetch_and_update(track_id.to_be_bytes(), Self::increment_inner) {
+            Ok(_) => {},
+            Err(e) => error!("Error while increase_played_times, {}", e),
+        }
+    }
+
+    pub(crate) fn like(&self, track_id: u32) {
+        match self.meta_tree.fetch_and_update(track_id.to_be_bytes(), Self::increment_inner) {
+            Ok(_) => {},
+            Err(e) => error!("Error while increase_played_times, {}", e),
+        }
+    }
+
+    pub(crate) fn dislike(&self, track_id: u32) {
+        match self.meta_tree.fetch_and_update(track_id.to_be_bytes(), Self::increment_inner) {
+            Ok(_) => {},
+            Err(e) => error!("Error while increase_played_times, {}", e),
+        }
+    }
+
+    pub(crate) fn reset_like(&self, track_id: u32) {
+        match self.meta_tree.fetch_and_update(track_id.to_be_bytes(), Self::increment_inner) {
+            Ok(_) => {},
+            Err(e) => error!("Error while increase_played_times, {}", e),
+        }
+    }
+
+    fn get_audio_file_doc_by_term(search_engine: &SearchEngine, term: &Term) -> Option<TantivyDocument>{
+        let term_query = TermQuery::new(term.clone(), IndexRecordOption::Basic);
+        let search_result = search_engine.searcher.search(&term_query, &TopDocs::with_limit(1));
+        match search_result {
+            Ok(result_vec) => {
+                if let Some((_score, doc_address)) = result_vec.first() {
+                    match search_engine.searcher.doc(*doc_address) {
+                        Ok(doc) => Some(doc),
+                        Err(_) => None,
+                    }
+                } else {
+                    None
+                }
+            },
+            Err(_) => None,
+        }
     }
 }
 
@@ -497,7 +643,7 @@ impl CacheInner {
         collection_no: usize,
         res: &mut PositionsCollector,
     ) where
-        I: Iterator<Item=std::result::Result<(sled::IVec, sled::IVec), sled::Error>>,
+        I: Iterator<Item = std::result::Result<(sled::IVec, sled::IVec), sled::Error>>,
         S: AsRef<str>,
     {
         iter.filter_map(|res| {
@@ -686,8 +832,7 @@ impl CacheInner {
 
 // Updating based on fs events
 impl CacheInner {
-    fn force_update_recursive<P: Into<PathBuf>>(&self, folder: P) {
-    }
+    fn force_update_recursive<P: Into<PathBuf>>(&self, folder: P) {}
 
     fn update_recursive_after_rename(&self, from: &Path, to: &Path) -> Result<()> {
         let mut delete_batch = Batch::default();

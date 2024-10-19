@@ -9,19 +9,13 @@ use crate::{
     error::{Error, Result},
     util::{checked_dec, into_range_bounds, to_satisfiable_range, ResponseBuilderExt},
 };
-use collection::{guess_mime_type, parse_chapter_path, FoldersOrdering, audio_meta::{AudioFolder, AudioFile}};
+use collection::{audio_meta::{AudioFile, AudioFolder, TrackMeta}, guess_mime_type, parse_chapter_path, FoldersOrdering};
 use futures::prelude::*;
 use futures::{future, ready, Stream};
 use headers::{AcceptRanges, CacheControl, ContentLength, ContentRange, ContentType, LastModified};
 use hyper::{Body, Response as HyperResponse, StatusCode};
 use std::{
-    collections::Bound,
-    ffi::OsStr,
-    io::{self, SeekFrom},
-    path::{Path, PathBuf},
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll}, env,
+    collections::Bound, env, ffi::OsStr, io::{self, SeekFrom}, path::{Path, PathBuf}, pin::Pin, sync::Arc, task::{Context, Poll}
 };
 use tokio::{
     io::{AsyncRead, AsyncSeekExt, ReadBuf},
@@ -214,9 +208,10 @@ pub fn get_all(
     collection: usize,
     collections: Arc<collection::Collections>,
 ) -> ResponseFuture {
+    let collections_track_meta = collections.clone();
     Box::pin(
         blocking(move || collections.list_all(collection))
-            .map_ok(|res| match res {
+            .map_ok(move |res| match res {
                 Ok(folder) => {
                     let af = AudioFolder {
                         modified: None,
@@ -226,7 +221,8 @@ pub fn get_all(
                             name: afi.name.clone(),
                             path: pathbuf_to_str_vec(&afi.path),
                             meta: afi.meta.clone(),
-                            mime: afi.mime.clone()
+                            mime: afi.mime.clone(),
+                            track_meta: collections_track_meta.get_track_meta(collection, afi.id).map_or(TrackMeta::default() , |v| v),
                         }).collect(),
                         cover: None,
                         description: None,
@@ -474,6 +470,30 @@ pub fn search(
         })
         .map_err(Error::new),
     )
+}
+
+pub fn like(
+    collections: Arc<collection::Collections>,
+    collection: usize,
+    track_id: u32
+) {
+    collections.like_track(collection, track_id);
+}
+
+pub fn dislike(
+    collections: Arc<collection::Collections>,
+    collection: usize,
+    track_id: u32
+) {
+    collections.dislike_track(collection, track_id);
+}
+
+pub fn reset_like(
+    collections: Arc<collection::Collections>,
+    collection: usize,
+    track_id: u32
+) {
+    collections.reset_like_for_track(collection, track_id);
 }
 
 pub fn recent(

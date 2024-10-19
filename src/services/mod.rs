@@ -1,7 +1,7 @@
 use self::auth::{AuthResult, Authenticator};
 use self::search::Search;
 use self::subs::{
-    collections_list, get_folder, get_all, recent, search, send_file, send_file_simple, ResponseFuture,
+    collections_list, get_folder, get_all, recent, search, send_file, send_file_simple, like, dislike, reset_like, ResponseFuture,
 };
 use crate::config::get_config;
 use crate::util::ResponseBuilderExt;
@@ -21,10 +21,9 @@ use headers::{
 use hyper::body::HttpBody;
 use hyper::{
     header::{
-        HeaderValue, CONNECTION, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_VERSION,
-        UPGRADE,
+        HeaderValue, CONNECTION, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, UPGRADE,
     },
-    service::{Service},
+    service::Service,
     upgrade::Upgraded,
     Body, Method, Request, Response, StatusCode, 
 };
@@ -735,6 +734,19 @@ impl<C: 'static> FileSendService<C> {
                             get_subpath(path, "/desc"),
                             get_config().folder_file_cache_age,
                         )
+                        //TODO: Fixme
+                    // } else if path.starts_with("/like/") {
+                    //     if let Some(track_id) = get_subpath(path, "/like/").to_str().and_then(|s| s.parse().ok()) {
+                    //         like(collections, collection_index, track_id);
+                    //     }
+                    // } else if path.starts_with("/dislike/") {
+                    //     if let Some(track_id) = get_subpath(path, "/dislike/").to_str().and_then(|s| s.parse().ok()) {
+                    //         dislike(collections, collection_index, track_id)
+                    //     }
+                    // } else if path.starts_with("/reset-like/") {
+                    //     if let Some(track_id) = get_subpath(path, "/reset-like/").to_str().and_then(|s| s.parse().ok()) {
+                    //         reset_like(collections, collection_index, track_id)
+                    //     }
                     } else {
                         error!("Invalid path requested {}", path);
                         resp::fut(resp::not_found)

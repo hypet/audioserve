@@ -1,7 +1,20 @@
+use std::fmt;
 use std::path::StripPrefixError;
 
 use sled::transaction::TransactionError;
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug)]
+pub enum TreeType {
+    Root,
+    Meta
+}
+
+impl fmt::Display for TreeType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self)
+    }
+}
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -65,6 +78,15 @@ pub enum Error {
 
     #[error("No track with id: {0}")]
     TrackNotFound(u32),
+
+    #[error("No track id={0} in tree {1}")]
+    NoTrackInTree(u32, TreeType),
+
+    #[error("No IVec for track id={0} in tree {1}")]
+    NoIVecForTrackInTree(u32, TreeType),
+
+    #[error("Could not deserialize track_id={0} in tree {1}")]
+    CouldNotDeserialize(u32, TreeType),
 }
 
 macro_rules! invalid_option_err {
