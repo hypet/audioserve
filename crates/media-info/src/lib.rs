@@ -1,6 +1,7 @@
 use std::path::Path;
 
-use lofty::{Accessor, AudioFile, Probe, TaggedFile};
+use lofty::file::{AudioFile, TaggedFile};
+use lofty::probe::Probe;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -75,7 +76,7 @@ impl MediaFile {
 mod tests {
     use core::panic;
 
-    use lofty::TaggedFileExt;
+    use lofty::file::TaggedFileExt;
 
     use super::*;
 
