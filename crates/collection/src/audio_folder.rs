@@ -106,7 +106,7 @@ impl FolderLister {
         base_dir: P,
     ) -> Result<AudioFolderInner, io::Error> {
         let full_path = base_dir.as_ref();
-        let mut file_id: u32 = 0;
+        let mut last_file_id: u32 = 0;
         let mut files = vec![];
 
         let ignore_dirs = match &self.config.ignore_dirs {
@@ -117,13 +117,15 @@ impl FolderLister {
             Some(dir_set) => dir_set,
             None => &HashSet::new(),
         };
-        file_id = self.traverse_dir(full_path, ignore_dirs, None, file_id, &mut files);
+        last_file_id = self.traverse_dir(full_path, ignore_dirs, None, last_file_id, &mut files);
+        // To flattened dirs specify it in collection parameters, e.g.:
+        // audioserve /mnt/music:flatten-dirs=/mnt/collection1+/mnt/collection2
         debug!("Flatten dirs: {:?}", flatten_dirs);
         flatten_dirs.iter().for_each(|dir| {
             let mut path = base_dir.as_ref().to_owned().clone().to_path_buf();
             path.push(dir);
             debug!("Path to flatten: {:?}", path);
-            file_id = self.traverse_dir(path.as_ref(), &HashSet::new(), Some(dir),  file_id, &mut files)
+            last_file_id = self.traverse_dir(path.as_ref(), &HashSet::new(), Some(dir),  last_file_id, &mut files)
         });
         info!("Files read: {}", &files.len());
 
@@ -187,7 +189,7 @@ impl FolderLister {
                         let _ = bincode::serialize(&af)
                             .map_err(Error::from)
                             .and_then(|data| self.db.insert(&file_counter.to_be_bytes(), data).map_err(Error::from))
-                            .map(|_| debug!("Cache updated for {:?}", &file_counter));
+                            .map(|_| trace!("Cache updated for {:?}", &file_counter));
     
                         files.push(af);
                     },

@@ -100,6 +100,7 @@ impl CollectionOptions {
                     })
                     .unwrap_or_else(|| invalid_option!("Value is required for option: {}", tag))
                 };
+                info!("tag: {tag}");
                 match tag {
                     "flatten-dirs" => {
                         if let Some(dirs) = val {
@@ -107,6 +108,7 @@ impl CollectionOptions {
                                 .split('+')
                                 .map(|s| { Ok(s.to_string()) })
                                 .collect::<Result<HashSet<_>>>()?;
+                            info!("flatten_dirs: {:?}", flatten_dirs);
                             self.flatten_dirs = Some(flatten_dirs);
                         } else {
                             invalid_option!("Some dirs are required for {}", tag);

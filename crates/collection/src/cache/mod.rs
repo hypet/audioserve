@@ -152,7 +152,6 @@ impl CollectionCache {
                     db.iter().filter_map(|r| r.ok())
                         .for_each(|(_, val)| {
                             if let Some(af) = deser_audiofile(val) {
-                                debug!("Indexing {}", &af.id);
                                 let mut doc = TantivyDocument::default();
                                 doc.add_u64(id, af.id as u64);
                                 doc.add_text(title, af.name.as_str());
