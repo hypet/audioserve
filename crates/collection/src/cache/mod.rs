@@ -4,7 +4,7 @@ use self::{
     util::kv_to_audiofolder,
 };
 use crate::{
-    audio_folder::FolderLister, audio_meta::{AudioFolderInner, FolderByModification, ScoredAudioFile, TimeStamp, TrackMeta}, cache::update::{filter_event, FilteredEvent}, common::{CollectionOptions, CollectionTrait, PositionsData, PositionsTrait}, error::{Error, Result}, position::{Position, PositionsCollector}, util::get_modified, AudioFileInner, AudioFolderShort, FoldersOrdering
+    audio_folder::FolderLister, audio_meta::{AudioFolderInner, AudioFolderTree, FolderByModification, ScoredAudioFile, TimeStamp, TrackMeta}, cache::update::{filter_event, FilteredEvent}, common::{CollectionOptions, CollectionTrait, PositionsData, PositionsTrait}, error::{Error, Result}, position::{Position, PositionsCollector}, util::get_modified, AudioFileInner, AudioFolderShort, FoldersOrdering
 };
 use crossbeam_channel::{unbounded as channel, Receiver, Sender};
 use inner::SearchEngine;
@@ -451,8 +451,12 @@ impl CollectionTrait for CollectionCache {
         self.inner.reset_like(track_id)
     }
     
-    fn get_track_meta(&self,track_id:u32,) -> Result<TrackMeta> {
+    fn get_track_meta(&self, track_id:u32,) -> Result<TrackMeta> {
         self.inner.get_track_meta(track_id)
+    }
+    
+    fn dir_tree(&self,) -> Result<AudioFolderTree> {
+        Ok(AudioFolderTree { dirs: vec![] })
     }
 
 }

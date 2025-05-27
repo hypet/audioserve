@@ -32,13 +32,16 @@ use percent_encoding::percent_decode;
 use rand::Rng;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use subs::get_tree;
 use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
 use tokio_tungstenite::tungstenite::protocol::Role;
 use tokio_tungstenite::tungstenite::Message;
 use uuid::Uuid;
+use std::fs;
 use std::iter::FromIterator;
+use std::ops::Bound;
 use std::str::FromStr;
-use std::sync::{Mutex, RwLock};
+use std::sync::RwLock;
 use std::time::Duration;
 use std::{
     borrow::Cow,
@@ -419,6 +422,23 @@ fn get_subpath(path: &str, prefix: &str) -> PathBuf {
     Path::new(&path).strip_prefix(prefix).unwrap().to_path_buf()
 }
 
+fn get_path_param(path: &str, prefix: &str) -> Option<String> {
+    match path.find(prefix) {
+        Some(idx) => {
+            let path_value_idx = idx+prefix.len();
+            let path_param_res = match path.find("?") {
+                Some(delimiter_idx) => String::from_str(&path[path_value_idx..delimiter_idx]),
+                None => String::from_str(&path[path_value_idx..]),
+            };
+            match path_param_res {
+                Ok(path_param) => Some(path_param),
+                Err(_) => None,
+            }
+        },
+        None => None,
+    }
+}
+
 fn add_cors_headers(
     mut resp: Response<Body>,
     origin: Option<Origin>,
@@ -668,6 +688,7 @@ impl<C: 'static> FileSendService<C> {
                             &req,
                             base_dir,
                             path,
+                            params,
                             collections,
                             collection_index,
                         )
@@ -682,6 +703,11 @@ impl<C: 'static> FileSendService<C> {
                         )
                     } else if path.starts_with("/all") {
                         get_all(
+                            collection_index,
+                            collections,
+                        )
+                    } else if path.starts_with("/tree") {
+                        get_tree(
                             collection_index,
                             collections,
                         )
@@ -828,25 +854,21 @@ impl<C: 'static> FileSendService<C> {
 
             None => None,
         };
-        let seek: Option<f32> = params.get("seek").and_then(|s| s.parse().ok());
-
-        send_file(base_dir, get_subpath(path, "/audio/"), bytes_range, seek)
+        send_file(base_dir, get_subpath(path, "/audio/"), bytes_range, None)
     }
 
     fn serve_media(
         req: &RequestWrapper,
         base_dir: &'static Path,
         path: &str,
+        params: QueryParams,
         collections: Arc<Collections>,
         collection_index: usize,
     ) -> ResponseFuture {
-        debug!(
-            "serve_media: Received request {}",
-            req.path
-        );
+        debug!("serve_media: Received request {}", path);
         let range = req.headers().typed_get::<Range>();
 
-        let bytes_range = match range.map(|r| r.iter().collect::<Vec<_>>()) {
+        let mut bytes_range = match range.map(|r| r.iter().collect::<Vec<_>>()) {
             Some(bytes_ranges) => {
                 if bytes_ranges.is_empty() {
                     error!("Range header without range bytes");
@@ -862,11 +884,39 @@ impl<C: 'static> FileSendService<C> {
             None => None,
         };
 
-        let track_id: Option<u32> = get_subpath(path, "/media/").to_str().and_then(|s| s.parse().ok());
+        let track_id: Option<u32> = get_path_param(path, "/media/").and_then(|s| s.parse().ok());
+        let seek: Option<f32> = params.get("seek").and_then(|s| s.parse().ok());
+        debug!("serve_media: seek {:?}", seek);
         match track_id {
             Some(track_id) => {
+                debug!("serve_media: track_id: {}", &track_id);
                 match collections.get_audio_track(collection_index, track_id) {
-                    Ok(af) => send_file(base_dir, af.path.join(Path::new(af.name.as_str())), bytes_range, None),
+                    Ok(af) => {
+                        match seek {
+                            Some(val ) => {
+                                if val > 0.0 {
+                                    let full_path = base_dir.to_path_buf().join(&af.path.as_path()).join(Path::new(&af.name.as_str()));
+                                    debug!("full_path: {:?}", &full_path);
+                                    match fs::metadata(full_path) {
+                                        Ok(metadata) => {
+                                            let file_size = metadata.len();
+                                            let duration = af.meta.unwrap().duration as u64;
+                                            bytes_range = Some((Bound::Included((((file_size / duration) as f32) * val) as u64), Bound::Included(file_size - 1)));
+                                            debug!("file_size: {} duration: {} bytes_range: {:?}", file_size, duration, &bytes_range);
+                                        },
+                                        Err(e) => error!("Could not get metadata of {:?}: {}", &af.path.to_str(), e),
+                                    }
+                                }
+                            },
+                            None => {},
+                        };
+                        send_file(
+                            base_dir, 
+                            af.path.join(Path::new(af.name.as_str())), 
+                            bytes_range, 
+                            Some(af.mime.as_str())
+                        )
+                    },
                     Err(e) => {
                         error!("Error while retrieving track {:?} info, {}", track_id, e);
                         resp::fut(resp::not_found)
@@ -1336,4 +1386,12 @@ mod tests {
         let message: Result<MsgIn, Error> = json.parse();
         println!("msg: {:?}", message.unwrap());
     }
+
+    #[test]
+    fn test_media_path_with_params() {
+        let path = "/0/media/142?seek=10";
+        let prefix = "/media/";
+        assert_eq!(get_path_param(path, prefix), Some(String::from_str("142").unwrap()));
+    }
+
 }

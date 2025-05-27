@@ -1,13 +1,28 @@
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs::{DirEntry, Metadata};
 use std::io;
 use std::path::Path;
+use std::str::FromStr;
 use std::time::SystemTime;
 
 use mime_guess::Mime;
 
+static MIME_SUBSTITUTION: Lazy<HashMap<&str, Mime>> = Lazy::new(|| {
+    let mime_mp4: Mime = Mime::from_str("audio/mpeg").unwrap();
+    let mut m = HashMap::new();
+    m.insert("audio/m4a", mime_mp4);
+    m
+});
+
 pub fn guess_mime_type<P: AsRef<Path>>(path: P) -> Mime {
-    mime_guess::from_path(path).first_or_octet_stream()
+    let mime = mime_guess::from_path(path).first_or_octet_stream();
+    let m = match MIME_SUBSTITUTION.get(mime.as_ref()) {
+        Some(mime) => (*mime).clone(),
+        None => mime,
+    };
+    m
 }
 
 pub fn get_file_name<P: AsRef<Path>>(path: P) -> String {

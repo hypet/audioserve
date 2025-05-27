@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     audio_folder::{DirType, FolderLister},
-    audio_meta::{AudioFolderInner, ScoredAudioFile, TimeStamp, TrackMeta},
+    audio_meta::{AudioFolderInner, AudioFolderTree, ScoredAudioFile, TimeStamp, TrackMeta},
     cache::util::{split_path, update_path},
     common::PositionsData,
     error::{Error, Result, TreeType},
@@ -117,6 +117,28 @@ impl CacheInner {
             tags: None,
         };
         Ok(af)
+    }
+
+    pub(crate) fn dir_tree(&self) -> Result<AudioFolderTree> {
+        let files: Vec<AudioFileInner> = self.db.iter()
+            .filter_map(|r| r.ok())
+            .filter_map(|(_, val)| {
+                match deser_audiofile(val) {
+                    Some(af) => Some(af),
+                    None => None,
+                }
+            })
+            .collect();
+        let _af = AudioFolderInner {
+            modified: Some(TimeStamp::now()),
+            total_time: Some(100),
+            files: files,
+            subfolders: Vec::new(),
+            cover: None,
+            description: None,
+            tags: None,
+        };
+        Ok(AudioFolderTree { dirs: vec![] })
     }
 
     pub(crate) fn search_collection<S: AsRef<str>>(

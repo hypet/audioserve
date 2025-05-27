@@ -107,6 +107,17 @@ pub struct ScoredAudioFile {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DirNode {
+    pub name: String,
+    pub children: Vec<DirNode>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AudioFolderTree {
+    pub dirs: Vec<DirNode>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AudioFolderInner {
     #[serde(default)]
     pub modified: Option<TimeStamp>, // last modification time of this folder

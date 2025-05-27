@@ -14,8 +14,9 @@ use futures::prelude::*;
 use futures::{future, ready, Stream};
 use headers::{AcceptRanges, CacheControl, ContentLength, ContentRange, ContentType, LastModified};
 use hyper::{Body, Response as HyperResponse, StatusCode};
+use mime::Mime;
 use std::{
-    collections::Bound, env, ffi::OsStr, io::{self, SeekFrom}, path::{Path, PathBuf}, pin::Pin, sync::Arc, task::{Context, Poll}
+    collections::Bound, env, ffi::OsStr, io::{self, SeekFrom}, path::{Path, PathBuf}, pin::Pin, str::FromStr, sync::Arc, task::{Context, Poll}
 };
 use tokio::{
     io::{AsyncRead, AsyncSeekExt, ReadBuf},
@@ -98,9 +99,10 @@ async fn serve_opened_file(
     let mut resp = HyperResponse::builder().typed_header(ContentType::from(mime));
     if let Some(age) = caching {
         if age > 0 {
-            let cache = CacheControl::new()
+            let cache: CacheControl = CacheControl::new()
                 .with_public()
-                .with_max_age(std::time::Duration::from_secs(u64::from(age)));
+                .with_no_cache();
+                // .with_max_age(std::time::Duration::from_secs(u64::from(age)));
             resp = resp.typed_header(cache);
         }
         if let Some(last_modified) = last_modified {
@@ -144,14 +146,25 @@ fn serve_file_from_fs(
     full_path: &Path,
     range: Option<ByteRange>,
     caching: Option<u32>,
+    mime_str: Option<&str>,
 ) -> ResponseFuture {
     let base_dir = env::current_dir();
     let filename: PathBuf = base_dir.unwrap().join(full_path).into();
+    let mime: Mime = match mime_str {
+        Some(m) => match Mime::from_str(m) {
+            Ok(mime) => mime,
+            Err(e) => {
+                error!("Could not get mime for {:?}, {}", &filename, e);
+                return Box::pin(future::err(Error::new(e)))
+            },
+        },
+        None => guess_mime_type(&filename),
+    };
+
     debug!("Requested static file: {:?}", filename);
     let fut = async move {
         match tokio::fs::File::open(&filename).await {
             Ok(file) => {
-                let mime = guess_mime_type(&filename);
                 serve_opened_file(file, range, caching, mime)
                     .await
                     .map_err(Error::new)
@@ -171,20 +184,20 @@ pub fn send_file_simple<P: AsRef<Path>>(
     cache: Option<u32>,
 ) -> ResponseFuture {
     let full_path = base_path.join(&file_path);
-    serve_file_from_fs(&full_path, None, cache)
+    serve_file_from_fs(&full_path, None, cache, None)
 }
 
 pub fn send_file<P: AsRef<Path>>(
     base_path: &'static Path,
     file_path: P,
     range: Option<ByteRange>,
-    seek: Option<f32>
+    mime: Option<&str>,
 ) -> ResponseFuture {
     debug!("send_file: {:?}", file_path.as_ref());
     let (real_path, span) = parse_chapter_path(file_path.as_ref());
     let full_path = base_path.join(real_path);
     debug!("Sending file directly from fs");
-    serve_file_from_fs(&full_path, range, None)
+    serve_file_from_fs(&full_path, range, None, mime)
 }
 
 pub fn get_folder(
@@ -198,6 +211,23 @@ pub fn get_folder(
         blocking(move || collections.list_dir(collection, &folder_path, ordering, group))
             .map_ok(|res| match res {
                 Ok(folder) => json_response(&folder),
+                Err(_) => resp::not_found(),
+            })
+            .map_err(Error::new),
+    )
+}
+
+pub fn get_tree(
+    collection: usize,
+    collections: Arc<collection::Collections>,
+) -> ResponseFuture {
+    let collections_track_meta = collections.clone();
+    Box::pin(
+        blocking(move || collections.dir_tree(collection))
+            .map_ok(move |res| match res {
+                Ok(folder) => {
+                    json_response(&folder)
+                },
                 Err(_) => resp::not_found(),
             })
             .map_err(Error::new),
@@ -269,7 +299,7 @@ pub fn download_folder(
             .await
             .context("metadata for folder download")?;
         if meta.is_file() {
-            serve_file_from_fs(&full_path, None, None).await
+            serve_file_from_fs(&full_path, None, None, None).await
         } else {
             let mut download_name = folder_path
                 .file_name()

@@ -3,7 +3,7 @@ extern crate log;
 
 pub use audio_folder::{list_dir_files_only, list_dir_files_with_subdirs, parse_chapter_path};
 pub use audio_meta::{AudioFileInner, AudioFolderShort, FoldersOrdering, TimeSpan};
-use audio_meta::{AudioFolderInner, ScoredAudioFile, TimeStamp, TrackMeta};
+use audio_meta::{AudioFolderInner, AudioFolderTree, ScoredAudioFile, TimeStamp, TrackMeta};
 use cache::CollectionCache;
 use common::{Collection, CollectionTrait, PositionsTrait};
 pub use common::{CollectionOptions, CollectionOptionsMap};
@@ -123,6 +123,14 @@ impl Collections {
     ) -> Result<AudioFolderInner> {
         self.get_cache(collection)?
             .list_all()
+    }
+
+    pub fn dir_tree(
+        &self,
+        collection: usize,
+    ) -> Result<AudioFolderTree> {
+        self.get_cache(collection)?
+            .dir_tree()
     }
 
     pub fn count_tracks(
