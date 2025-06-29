@@ -612,7 +612,7 @@ impl<C: 'static> FileSendService<C> {
         match *req.method() {
             Method::GET => {
                 if path.starts_with("/collections") {
-                    collections_list()
+                    collections_list(collections)
                 } else if path.starts_with("/ws") {
                     handle_request(collections, devices, req.request, addr)
                 } else if cfg!(feature = "shared-positions") && path.starts_with("/positions") {

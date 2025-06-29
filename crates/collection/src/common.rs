@@ -20,6 +20,7 @@ pub enum PositionsData {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CollectionOptions {
+    pub name: Option<String>,
     #[serde(skip)]
     pub no_cache: bool,
     pub ignore_dirs: Option<HashSet<String>>,
@@ -58,6 +59,7 @@ impl PartialEq for CollectionOptions {
 impl Default for CollectionOptions {
     fn default() -> Self {
         Self {
+            name: None,
             no_cache: false,
             ignore_dirs: None,
             flatten_dirs: None,
@@ -100,8 +102,12 @@ impl CollectionOptions {
                     })
                     .unwrap_or_else(|| invalid_option!("Value is required for option: {}", tag))
                 };
-                info!("tag: {tag}");
                 match tag {
+                    "name" => {
+                        if let Some(name) = val {
+                            self.name = Some(name.to_string())
+                        }
+                    },
                     "flatten-dirs" => {
                         if let Some(dirs) = val {
                             let flatten_dirs = dirs

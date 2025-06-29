@@ -9,14 +9,25 @@ use crate::{
     error::{Error, Result},
     util::{checked_dec, into_range_bounds, to_satisfiable_range, ResponseBuilderExt},
 };
-use collection::{audio_meta::{AudioFile, AudioFolder, TrackMeta}, guess_mime_type, parse_chapter_path, FoldersOrdering};
+use collection::{
+    audio_meta::{AudioFile, AudioFolder, TrackMeta},
+    guess_mime_type, parse_chapter_path, Collections, FoldersOrdering,
+};
 use futures::prelude::*;
 use futures::{future, ready, Stream};
 use headers::{AcceptRanges, CacheControl, ContentLength, ContentRange, ContentType, LastModified};
 use hyper::{Body, Response as HyperResponse, StatusCode};
 use mime::Mime;
 use std::{
-    collections::Bound, env, ffi::OsStr, io::{self, SeekFrom}, path::{Path, PathBuf}, pin::Pin, str::FromStr, sync::Arc, task::{Context, Poll}
+    collections::Bound,
+    env,
+    ffi::OsStr,
+    io::{self, SeekFrom},
+    path::{Path, PathBuf},
+    pin::Pin,
+    str::FromStr,
+    sync::Arc,
+    task::{Context, Poll},
 };
 use tokio::{
     io::{AsyncRead, AsyncSeekExt, ReadBuf},
@@ -99,10 +110,8 @@ async fn serve_opened_file(
     let mut resp = HyperResponse::builder().typed_header(ContentType::from(mime));
     if let Some(age) = caching {
         if age > 0 {
-            let cache: CacheControl = CacheControl::new()
-                .with_public()
-                .with_no_cache();
-                // .with_max_age(std::time::Duration::from_secs(u64::from(age)));
+            let cache: CacheControl = CacheControl::new().with_public().with_no_cache();
+            // .with_max_age(std::time::Duration::from_secs(u64::from(age)));
             resp = resp.typed_header(cache);
         }
         if let Some(last_modified) = last_modified {
@@ -155,8 +164,8 @@ fn serve_file_from_fs(
             Ok(mime) => mime,
             Err(e) => {
                 error!("Could not get mime for {:?}, {}", &filename, e);
-                return Box::pin(future::err(Error::new(e)))
-            },
+                return Box::pin(future::err(Error::new(e)));
+            }
         },
         None => guess_mime_type(&filename),
     };
@@ -164,11 +173,9 @@ fn serve_file_from_fs(
     debug!("Requested static file: {:?}", filename);
     let fut = async move {
         match tokio::fs::File::open(&filename).await {
-            Ok(file) => {
-                serve_opened_file(file, range, caching, mime)
-                    .await
-                    .map_err(Error::new)
-            }
+            Ok(file) => serve_opened_file(file, range, caching, mime)
+                .await
+                .map_err(Error::new),
             Err(e) => {
                 error!("Error when sending file {:?} : {}", filename, e);
                 Ok(resp::not_found())
@@ -217,27 +224,19 @@ pub fn get_folder(
     )
 }
 
-pub fn get_tree(
-    collection: usize,
-    collections: Arc<collection::Collections>,
-) -> ResponseFuture {
+pub fn get_tree(collection: usize, collections: Arc<collection::Collections>) -> ResponseFuture {
     let collections_track_meta = collections.clone();
     Box::pin(
         blocking(move || collections.dir_tree(collection))
             .map_ok(move |res| match res {
-                Ok(folder) => {
-                    json_response(&folder)
-                },
+                Ok(folder) => json_response(&folder),
                 Err(_) => resp::not_found(),
             })
             .map_err(Error::new),
     )
 }
 
-pub fn get_all(
-    collection: usize,
-    collections: Arc<collection::Collections>,
-) -> ResponseFuture {
+pub fn get_all(collection: usize, collections: Arc<collection::Collections>) -> ResponseFuture {
     let collections_track_meta = collections.clone();
     Box::pin(
         blocking(move || collections.list_all(collection))
@@ -246,20 +245,26 @@ pub fn get_all(
                     let af = AudioFolder {
                         modified: None,
                         total_time: folder.total_time,
-                        files: folder.files.iter().map(|afi| AudioFile {
-                            id: afi.id,
-                            name: afi.name.clone(),
-                            path: pathbuf_to_str_vec(&afi.path),
-                            meta: afi.meta.clone(),
-                            mime: afi.mime.clone(),
-                            track_meta: collections_track_meta.get_track_meta(collection, afi.id).map_or(TrackMeta::default() , |v| v),
-                        }).collect(),
+                        files: folder
+                            .files
+                            .iter()
+                            .map(|afi| AudioFile {
+                                id: afi.id,
+                                name: afi.name.clone(),
+                                path: pathbuf_to_str_vec(&afi.path),
+                                meta: afi.meta.clone(),
+                                mime: afi.mime.clone(),
+                                track_meta: collections_track_meta
+                                    .get_track_meta(collection, afi.id)
+                                    .map_or(TrackMeta::default(), |v| v),
+                            })
+                            .collect(),
                         cover: None,
                         description: None,
-                        tags: None
+                        tags: None,
                     };
                     json_response(&af)
-                },
+                }
                 Err(_) => resp::not_found(),
             })
             .map_err(Error::new),
@@ -268,20 +273,19 @@ pub fn get_all(
 
 pub fn path_to_subfolder(path_buf: &PathBuf) -> Option<String> {
     match path_buf.components().next() {
-        Some(first_component_from_base_dir) => {
-            match first_component_from_base_dir {
-                std::path::Component::Normal(normal) => {
-                    Some(normal.to_str().unwrap().into())
-                },
-                _ => Option::None,
-            }
+        Some(first_component_from_base_dir) => match first_component_from_base_dir {
+            std::path::Component::Normal(normal) => Some(normal.to_str().unwrap().into()),
+            _ => Option::None,
         },
         None => Option::None,
     }
 }
 
 pub fn pathbuf_to_str_vec(path_buf: &PathBuf) -> Vec<String> {
-    path_buf.components().map(|c| c.as_os_str().to_str().unwrap().into()).collect()
+    path_buf
+        .components()
+        .map(|c| c.as_os_str().to_str().unwrap().into())
+        .collect()
 }
 
 #[cfg(feature = "folder-download")]
@@ -380,8 +384,8 @@ fn json_response<T: serde::Serialize>(data: &T) -> Response {
 
 const UNKNOWN_NAME: &str = "unknown";
 
-pub fn collections_list() -> ResponseFuture {
-    let collections = CollectionsInfo {
+pub fn collections_list(collections: Arc<Collections>) -> ResponseFuture {
+    let collections_info = CollectionsInfo {
         version: env!("CARGO_PKG_VERSION"),
         folder_download: !get_config().disable_folder_download,
         shared_positions: cfg!(feature = "shared-positions"),
@@ -396,8 +400,8 @@ pub fn collections_list() -> ResponseFuture {
             })
             .collect(),
     };
-    debug!("Sending collections: {}", &collections.count);
-    Box::pin(future::ok(json_response(&collections)))
+    debug!("Sending collections: {}", &collections_info.count);
+    Box::pin(future::ok(json_response(&collections_info)))
 }
 
 #[cfg(feature = "shared-positions")]
@@ -502,27 +506,15 @@ pub fn search(
     )
 }
 
-pub fn like(
-    collections: Arc<collection::Collections>,
-    collection: usize,
-    track_id: u32
-) {
+pub fn like(collections: Arc<collection::Collections>, collection: usize, track_id: u32) {
     collections.like_track(collection, track_id);
 }
 
-pub fn dislike(
-    collections: Arc<collection::Collections>,
-    collection: usize,
-    track_id: u32
-) {
+pub fn dislike(collections: Arc<collection::Collections>, collection: usize, track_id: u32) {
     collections.dislike_track(collection, track_id);
 }
 
-pub fn reset_like(
-    collections: Arc<collection::Collections>,
-    collection: usize,
-    track_id: u32
-) {
+pub fn reset_like(collections: Arc<collection::Collections>, collection: usize, track_id: u32) {
     collections.reset_like_for_track(collection, track_id);
 }
 

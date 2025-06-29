@@ -100,6 +100,10 @@ impl Collections {
 }
 
 impl Collections {
+    fn get_name(&self, collection: usize) -> Option<String> {
+        self.caches.get(collection).ok_or()
+    }
+
     fn get_cache(&self, collection: usize) -> Result<&Collection> {
         self.caches
             .get(collection)
@@ -117,49 +121,32 @@ impl Collections {
             .list_dir(dir_path, ordering, group)
     }
 
-    pub fn list_all(
-        &self,
-        collection: usize,
-    ) -> Result<AudioFolderInner> {
-        self.get_cache(collection)?
-            .list_all()
+    pub fn list_all(&self, collection: usize) -> Result<AudioFolderInner> {
+        self.get_cache(collection)?.list_all()
     }
 
-    pub fn dir_tree(
-        &self,
-        collection: usize,
-    ) -> Result<AudioFolderTree> {
-        self.get_cache(collection)?
-            .dir_tree()
+    pub fn dir_tree(&self, collection: usize) -> Result<AudioFolderTree> {
+        self.get_cache(collection)?.dir_tree()
     }
 
-    pub fn count_tracks(
-        &self,
-        collection: usize,
-    ) -> Result<u32> {
-        self.get_cache(collection)?
-            .count_tracks()
+    pub fn count_tracks(&self, collection: usize) -> Result<u32> {
+        self.get_cache(collection)?.count_tracks()
     }
 
-    pub fn get_audio_track(
-        &self,
-        collection: usize,
-        id: u32,
-    ) -> Result<AudioFileInner> {
+    pub fn get_audio_track(&self, collection: usize, id: u32) -> Result<AudioFileInner> {
         self.get_cache(collection)?.get_audio_track(id)
     }
 
-    pub fn get_track_meta(
-        &self,
-        collection: usize,
-        id: u32,
-    ) -> Result<TrackMeta> {
+    pub fn get_track_meta(&self, collection: usize, id: u32) -> Result<TrackMeta> {
         self.get_cache(collection)?.get_track_meta(id)
     }
 
-    pub fn count_files_in_dir<P: AsRef<Path>>(&self, collection: usize, dir_path: P) -> Result<usize> {
-        self.get_cache(collection)?
-            .count_files_in_dir(dir_path)
+    pub fn count_files_in_dir<P: AsRef<Path>>(
+        &self,
+        collection: usize,
+        dir_path: P,
+    ) -> Result<usize> {
+        self.get_cache(collection)?.count_files_in_dir(dir_path)
     }
 
     pub fn flush(&self) -> Result<()> {
@@ -192,23 +179,21 @@ impl Collections {
     }
 
     pub fn increase_played_times_for_track(&self, collection: usize, id: u32) {
-        let _ = self.get_cache(collection)
+        let _ = self
+            .get_cache(collection)
             .map(|cache| cache.increase_played_times(id));
     }
 
     pub fn like_track(&self, collection: usize, id: u32) {
-        let _ = self.get_cache(collection)
-            .map(|cache| cache.like(id));
+        let _ = self.get_cache(collection).map(|cache| cache.like(id));
     }
 
     pub fn dislike_track(&self, collection: usize, id: u32) {
-        let _ = self.get_cache(collection)
-            .map(|cache| cache.dislike(id));
+        let _ = self.get_cache(collection).map(|cache| cache.dislike(id));
     }
 
     pub fn reset_like_for_track(&self, collection: usize, id: u32) {
-        let _ = self.get_cache(collection)
-            .map(|cache| cache.reset_like(id));
+        let _ = self.get_cache(collection).map(|cache| cache.reset_like(id));
     }
 }
 
