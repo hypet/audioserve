@@ -390,14 +390,8 @@ pub fn collections_list(collections: Arc<Collections>) -> ResponseFuture {
         folder_download: !get_config().disable_folder_download,
         shared_positions: cfg!(feature = "shared-positions"),
         count: get_config().base_dirs.len() as u32,
-        names: get_config()
-            .base_dirs
-            .iter()
-            .map(|p| {
-                p.file_name()
-                    .and_then(OsStr::to_str)
-                    .unwrap_or(UNKNOWN_NAME)
-            })
+        names: (0..collections.len().unwrap_or(0))
+            .map(|collection| collections.get_name(collection).unwrap())
             .collect(),
     };
     debug!("Sending collections: {}", &collections_info.count);

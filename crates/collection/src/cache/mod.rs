@@ -28,6 +28,7 @@ mod update;
 mod util;
 
 pub struct CollectionCache {
+    name: String,
     thread_loop: Option<thread::JoinHandle<()>>,
     watcher_sender: Arc<Mutex<Option<std::sync::mpsc::Sender<DebouncedEvent>>>>,
     thread_updater: Option<thread::JoinHandle<()>>,
@@ -90,7 +91,7 @@ impl CollectionCache {
             .cache_capacity(100 * 1024 * 1024)
             .open()?;
 
-        let lister = FolderLister::new_with_options(opt.into(), db.clone());
+        let lister = FolderLister::new_with_options(opt.clone().into(), db.clone());
         info!("Traversing collection {:?}, db contains {} records", &root_path, db.len());
         if db.is_empty() {
             let _ = lister.traverse_collection(&root_path);
@@ -105,6 +106,7 @@ impl CollectionCache {
         let (update_sender, update_receiver) = channel::<Option<UpdateAction>>();
 
         Ok(CollectionCache {
+            name: opt.name.map_or_else(|| root_path.components().last().unwrap().as_os_str().to_str().unwrap().to_string(), |v| v.clone()),
             inner: Arc::new(CacheInner::new(
                 db,
                 lister,
@@ -456,6 +458,10 @@ impl CollectionTrait for CollectionCache {
     
     fn dir_tree(&self,) -> Result<AudioFolderTree> {
         Ok(AudioFolderTree { dirs: vec![] })
+    }
+
+    fn get_name(&self,) -> Result<String> {
+        Ok(self.name.clone())
     }
 
 }

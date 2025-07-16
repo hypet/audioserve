@@ -279,6 +279,8 @@ pub(crate) trait PositionsTrait {
 
 #[enum_dispatch]
 pub(crate) trait CollectionTrait {
+    fn get_name(&self,) -> Result<String>;
+
     fn list_dir<P>(
         &self,
         dir_path: P,

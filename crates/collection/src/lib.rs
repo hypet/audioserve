@@ -100,8 +100,12 @@ impl Collections {
 }
 
 impl Collections {
-    fn get_name(&self, collection: usize) -> Option<String> {
-        self.caches.get(collection).ok_or()
+    pub fn len(&self) -> Result<usize> {
+        Ok(self.caches.len())
+    }
+
+    pub fn get_name(&self, collection: usize) -> Result<String> {
+        self.get_cache(collection)?.get_name()
     }
 
     fn get_cache(&self, collection: usize) -> Result<&Collection> {

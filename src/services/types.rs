@@ -8,7 +8,7 @@ pub struct CollectionsInfo {
     pub folder_download: bool,
     pub shared_positions: bool,
     pub count: u32,
-    pub names: Vec<&'static str>,
+    pub names: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
